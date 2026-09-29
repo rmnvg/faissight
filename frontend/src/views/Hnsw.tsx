@@ -7,6 +7,7 @@ import { useMutation, useQueries, useQuery } from '@tanstack/react-query'
 import { useEffect, useMemo, useRef, useState, type FormEvent } from 'react'
 import { Bar, BarChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts'
 import { api } from '../api/client'
+import { useLatestSignal } from '../api/hooks'
 import type { HnswGraph, HnswOutcome, HnswStats, HnswTrace, Info } from '../api/types'
 import { Banner, Card, EmptyState, Segmented, SnippetText, Spinner, StatTile } from '../components/ui'
 import { fmtDist, fmtNum } from '../lib/format'
@@ -30,16 +31,20 @@ export default function Hnsw({
   params: URLSearchParams
   mode: ThemeMode
 }) {
-  const stats = useQuery({ queryKey: ['hnsw-stats'], queryFn: api.hnswStats, staleTime: Infinity })
+  const stats = useQuery({ queryKey: ['hnsw-stats'], queryFn: ({ signal }) => api.hnswStats(signal), staleTime: Infinity })
   const urlId = parseId(params.get('id'))
   const [idInput, setIdInput] = useState(urlId !== null ? String(urlId) : '')
   const [k, setK] = useState(10)
   const [ef, setEf] = useState(intParam(params, 'ef') ?? Number(info.params.ef_search ?? 16))
   const [formError, setFormError] = useState<string | null>(null)
 
+  const nextSignal = useLatestSignal()
   const trace = useMutation({
     mutationFn: (req: { id: UserId; k: number; ef: number }) =>
-      api.traceHnsw({ query: { id: req.id }, k: req.k, efSearch: req.ef, compare: true }),
+      api.traceHnsw(
+        { query: { id: req.id }, k: req.k, efSearch: req.ef, compare: true },
+        nextSignal(),
+      ),
   })
 
   const run = (id: UserId) => trace.mutate({ id, k, ef })
@@ -163,8 +168,13 @@ function Scene({ stats, trace, mode }: { stats: HnswStats; trace: HnswTrace | nu
   const graphs = useQueries({
     queries: levels.map((level) => ({
       queryKey: ['hnsw-graph', level, level === 0 ? level0Entry : null],
-      queryFn: () =>
-        api.hnswGraph(level, level === 0 ? LEVEL0_LIMIT : UPPER_LIMIT, level === 0 ? level0Entry : null),
+      queryFn: ({ signal }) =>
+        api.hnswGraph(
+          level,
+          level === 0 ? LEVEL0_LIMIT : UPPER_LIMIT,
+          level === 0 ? level0Entry : null,
+          signal,
+        ),
       staleTime: Infinity,
     })),
   })

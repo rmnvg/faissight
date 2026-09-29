@@ -1,5 +1,6 @@
 import { lazy, Suspense, useEffect, useState } from 'react'
 import { useInfo } from './api/hooks'
+import { ErrorBoundary } from './components/ErrorBoundary'
 import { Sidebar } from './components/Sidebar'
 import { Banner, Spinner } from './components/ui'
 import { navigate, useRoute } from './lib/route'
@@ -66,22 +67,24 @@ export default function App() {
             </Banner>
           </div>
         ) : (
-          <Suspense
-            fallback={
-              <div className="p-8">
-                <Spinner />
-              </div>
-            }
-          >
-            {view === 'overview' && <Overview info={info.data} />}
-            {view === 'map' && <ClusterMap info={info.data} params={route.params} mode={mode} />}
-            {view === 'tuner' && <Tuner info={info.data} params={route.params} />}
-            {view === 'hnsw' && <Hnsw info={info.data} params={route.params} mode={mode} />}
-            {view === 'quantization' && <Quantization info={info.data} />}
-            {view === 'query' && (
-              <QueryExplorer info={info.data} params={route.params} mode={mode} />
-            )}
-          </Suspense>
+          <ErrorBoundary key={view}>
+            <Suspense
+              fallback={
+                <div className="p-8">
+                  <Spinner />
+                </div>
+              }
+            >
+              {view === 'overview' && <Overview info={info.data} />}
+              {view === 'map' && <ClusterMap info={info.data} params={route.params} mode={mode} />}
+              {view === 'tuner' && <Tuner info={info.data} params={route.params} />}
+              {view === 'hnsw' && <Hnsw info={info.data} params={route.params} mode={mode} />}
+              {view === 'quantization' && <Quantization info={info.data} />}
+              {view === 'query' && (
+                <QueryExplorer info={info.data} params={route.params} mode={mode} />
+              )}
+            </Suspense>
+          </ErrorBoundary>
         )}
       </main>
     </div>

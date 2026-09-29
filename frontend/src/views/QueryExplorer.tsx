@@ -13,6 +13,7 @@ import {
   YAxis,
 } from 'recharts'
 import { api } from '../api/client'
+import { useLatestSignal } from '../api/hooks'
 import type {
   Info,
   IvfTrace,
@@ -68,11 +69,12 @@ export default function QueryExplorer({
   const [formError, setFormError] = useState<string | null>(null)
   const inputRef = useRef<HTMLInputElement & HTMLTextAreaElement>(null)
 
+  const nextSignal = useLatestSignal()
   const run = useMutation({
     mutationFn: async (req: SearchRequest): Promise<RunResult> => {
       // One round trip: the probe trace rides on the search, and only when comparing,
       // since explaining misses needs exact ground truth.
-      const search = await api.search({ ...req, trace: isIvf && req.compare })
+      const search = await api.search({ ...req, trace: isIvf && req.compare }, nextSignal())
       return { search, trace: search.ivf_trace, request: req }
     },
   })
