@@ -1,5 +1,7 @@
 import type { UserId } from '../api/types'
-import { useMemo } from 'react'
+import { useQueryClient } from '@tanstack/react-query'
+import { useCallback, useMemo } from 'react'
+import { api } from '../api/client'
 import { isReady, useProjection } from '../api/hooks'
 import type { Dims, JobStatus, Projection, ProjectionMethod } from '../api/types'
 import { packPositions } from './points'
@@ -36,5 +38,14 @@ export function useMapData(method: ProjectionMethod, dims: Dims, isIvf: boolean)
 
   const status: JobStatus | null =
     pts.data && pts.data.status !== 'done' ? (pts.data as JobStatus) : null
-  return { data, status, error: pts.error ?? cents.error, loading: !data && !pts.error }
+  // Failed projections stay failed server-side; restart explicitly, then poll as usual.
+  const qc = useQueryClient()
+  const retry = useCallback(async () => {
+    await api.projection('points', method, dims, undefined, true).catch(() => {})
+    await qc.resetQueries({
+      predicate: (q) => q.queryKey[0] === 'projection' && q.queryKey[2] === method && q.queryKey[3] === dims,
+    })
+  }, [qc, method, dims])
+
+  return { data, status, error: pts.error ?? cents.error, loading: !data && !pts.error, retry }
 }

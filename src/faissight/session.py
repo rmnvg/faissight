@@ -281,11 +281,14 @@ class Session:
             return self._embedder
         if self._embedder_model is None:
             return None
+        # A text query is an explicit request, so a failed load is retried (status polling
+        # through embedder_job keeps reporting the failure instead).
         return self.jobs.run_sync(
             ("embedder", self._embedder_model),
             lambda progress: sentence_transformer_embedder(
                 self._embedder_model or "", normalize=self._should_normalize_text()
             ),
+            retry=True,
         )
 
     # --- queries --------------------------------------------------------------------------
@@ -329,9 +332,15 @@ class Session:
     # --- projections ----------------------------------------------------------------------
 
     def projection_job(
-        self, method: ProjectionMethod | str = ProjectionMethod.PCA, dims: int = 2
+        self,
+        method: ProjectionMethod | str = ProjectionMethod.PCA,
+        dims: int = 2,
+        retry: bool = False,
     ) -> Job[Projection]:
-        """Start (or return) the background job computing this projection."""
+        """Start (or return) the background job computing this projection.
+
+        A failed job is returned until ``retry`` starts a new attempt.
+        """
         method = ProjectionMethod(method)
         if dims not in (2, 3):
             raise ValueError(f"dims must be 2 or 3, got {dims}.")
@@ -362,7 +371,7 @@ class Session:
                 progress=progress,
             )
 
-        return self.jobs.get_or_start(key, work)
+        return self.jobs.get_or_start(key, work, retry=retry)
 
     def _umap_cached(self, dims: int) -> bool:
         if not self._disk_cache:
@@ -391,8 +400,11 @@ class Session:
 
     # --- quantization ---------------------------------------------------------------------
 
-    def pq_job(self) -> Job[pq_mod.QuantizationReport]:
-        """Background job measuring reconstruction error. Needs raw vectors."""
+    def pq_job(self, retry: bool = False) -> Job[pq_mod.QuantizationReport]:
+        """Background job measuring reconstruction error. Needs raw vectors.
+
+        A failed job is returned until ``retry`` starts a new attempt.
+        """
         if not self.li.is_supported:
             raise ValueError(f"Cannot analyse: {self.li.unsupported_reason}")
         if self._raw is None:
@@ -405,7 +417,7 @@ class Session:
             progress(0.6, "Measuring error and distortion")
             return pq_mod.analyze(self.li, raw, stored, self.assignments)
 
-        return self.jobs.get_or_start(("pq",), work)
+        return self.jobs.get_or_start(("pq",), work, retry=retry)
 
     # --- HNSW -----------------------------------------------------------------------------
 
@@ -528,7 +540,8 @@ class Session:
                 seed=seed,
             )
 
-        job = self.jobs.get_or_start(key, work)
+        # Starting a sweep is explicit, so a failed or cancelled run with the same settings reruns.
+        job = self.jobs.get_or_start(key, work, retry=True)
         with self._lock:
             mappings = self._lazy.setdefault("sweep_ids", {})
             for old_id, old_key in list(mappings.items()):

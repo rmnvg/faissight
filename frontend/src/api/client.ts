@@ -85,10 +85,21 @@ async function request<T>(
     caller?.removeEventListener('abort', onCallerAbort)
   }
   let body: unknown = null
+  let parsed = false
   try {
     body = text ? JSON.parse(text) : null
+    parsed = true
   } catch {
     body = null
+  }
+  if (res.ok && !(parsed && typeof body === 'object' && body !== null && !Array.isArray(body))) {
+    // Every endpoint answers with a JSON object; anything else (an HTML page from a proxy
+    // or login wall, an empty body) would otherwise be cast to the expected type and fail later.
+    throw new ApiError(res.status, {
+      error_code: 'INVALID_RESPONSE',
+      message: `The server's answer to ${path.split('?')[0]} was not faissight JSON.`,
+      hint: 'A proxy or login page may be answering instead of `faissight serve`; check the URL.',
+    })
   }
   if (!res.ok) {
     const err = body as Partial<ApiErrorBody> | null
@@ -119,13 +130,19 @@ export const api = {
   ivfLists: (signal?: AbortSignal) => get<ListSizes>('ivf/lists', signal),
   listMembers: (listNo: number, offset: number, limit: number, signal?: AbortSignal) =>
     get<ListMembers>(`ivf/list/${listNo}?offset=${offset}&limit=${limit}`, signal),
-  /** Resolves to a JobStatus (HTTP 202) while the projection is still computing. */
+  /** Resolves to a JobStatus (HTTP 202) while the projection is still computing.
+   * A failed projection stays failed until a call with `retry` restarts it. */
   projection: (
     kind: 'points' | 'centroids',
     method: ProjectionMethod,
     dims: Dims,
     signal?: AbortSignal,
-  ) => get<ProjectionOrStatus>(`projection?kind=${kind}&method=${method}&dims=${dims}`, signal),
+    retry = false,
+  ) =>
+    get<ProjectionOrStatus>(
+      `projection?kind=${kind}&method=${method}&dims=${dims}${retry ? '&retry=true' : ''}`,
+      signal,
+    ),
   search: (req: SearchRequest, signal?: AbortSignal) => post<SearchResponse>('search', req, signal),
   metadata: (id: UserId, signal?: AbortSignal) => get<MetadataRow>(`metadata/${id}`, signal),
   /** Starts (or reuses) a sweep; the job may still be running (HTTP 202). */
@@ -142,6 +159,8 @@ export const api = {
     ),
   traceHnsw: (req: SearchRequest, signal?: AbortSignal) =>
     post<HnswTrace>('trace/hnsw', req, signal),
-  /** Resolves to a JobStatus (HTTP 202) while the analysis is still computing. */
-  pqError: (signal?: AbortSignal) => get<PqErrorOrStatus>('pq/error', signal),
+  /** Resolves to a JobStatus (HTTP 202) while the analysis is still computing.
+   * A failed analysis stays failed until a call with `retry` restarts it. */
+  pqError: (signal?: AbortSignal, retry = false) =>
+    get<PqErrorOrStatus>(`pq/error${retry ? '?retry=true' : ''}`, signal),
 }

@@ -3,7 +3,7 @@ import { useIvfLists, useListMembers, useMetadata } from '../api/hooks'
 import type { Dims, Info, ProjectionMethod } from '../api/types'
 import { ScatterMap, type HoverTarget } from '../components/ScatterMap'
 import { fillColors } from '../lib/points'
-import { Banner, Card, EmptyState, Progress, Segmented, SnippetText, Spinner } from '../components/ui'
+import { Banner, Card, EmptyState, Progress, RetryButton, Segmented, SnippetText, Spinner } from '../components/ui'
 import { fmtNum } from '../lib/format'
 import { useMapData } from '../lib/mapData'
 import { intParam, navigate } from '../lib/route'
@@ -30,7 +30,7 @@ export default function ClusterMap({
   const selected = intParam(params, 'list')
   const [hover, setHover] = useState<HoverTarget | null>(null)
 
-  const { data, status, error } = useMapData(method, dims, isIvf)
+  const { data, status, error, retry } = useMapData(method, dims, isIvf)
   const lists = useIvfLists(isIvf)
   const sizes = lists.data?.sizes ?? null
   const hasMeta = info.inputs.metadata_rows !== null
@@ -162,7 +162,12 @@ export default function ClusterMap({
               tooltip={tooltip}
             />
           ) : error ? (
-            <EmptyState title="Projection unavailable">{error.message}</EmptyState>
+            <EmptyState title="Projection unavailable">
+              {error.message}
+              <div>
+                <RetryButton onClick={retry} />
+              </div>
+            </EmptyState>
           ) : status ? (
             <div className="flex h-full items-center justify-center">
               <Progress value={status.progress} message={status.message} />

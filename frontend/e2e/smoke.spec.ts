@@ -146,6 +146,25 @@ test('quantization: analysis loads with error, compression and distortion', asyn
   await expect(worst).toHaveCount(50)
 })
 
+test('a failed analysis stays failed until "Try again" restarts it', async ({ page }) => {
+  const urls: string[] = []
+  await page.route('**/api/pq/error*', async (route) => {
+    urls.push(route.request().url())
+    if (urls.length === 1)
+      await route.fulfill({
+        status: 500,
+        contentType: 'application/json',
+        body: JSON.stringify({ error_code: 'PQ_FAILED', message: 'Quantization analysis failed: boom', hint: null }),
+      })
+    else await route.continue()
+  })
+  await page.goto('/#/quantization')
+  await expect(page.getByText('Quantization analysis failed: boom').first()).toBeVisible()
+  await page.getByRole('button', { name: 'Try again' }).click()
+  await expect(page.getByText('Mean squared error')).toBeVisible({ timeout: 20_000 })
+  expect(urls[1]).toContain('retry=true')
+})
+
 test('large int64 ids survive searches, result links, reloads and HNSW traces', async ({ page }) => {
   const id = '9007199254740993'
   await page.goto('http://127.0.0.1:8797/#/query')

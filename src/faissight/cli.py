@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import errno
 import json
 import socket
 import threading
@@ -133,15 +134,41 @@ def info(
         )
 
 
-def _port_available(host: str, port: int) -> bool:
-    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
+def _bind_problem(host: str, port: int) -> tuple[str, str] | None:
+    """Why ``serve`` couldn't listen on ``host:port`` as ``(message, hint)``, or None if it can."""
+    where = f"{host}:{port}"
+    try:
+        # Resolve first so hostnames and IPv6 addresses (like "::") get the right family.
+        family, kind, proto, _, addr = socket.getaddrinfo(
+            host or None, port, type=socket.SOCK_STREAM, flags=socket.AI_PASSIVE
+        )[0]
+    except socket.gaierror:
+        return (
+            f"Cannot resolve host {host!r}.",
+            "Use 127.0.0.1 (this machine only) or 0.0.0.0 (all interfaces).",
+        )
+    with socket.socket(family, kind, proto) as sock:
         # Like uvicorn: a recently closed port in TIME_WAIT is free, a live listener is not.
         sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
         try:
-            sock.bind((host, port))
-        except OSError:
-            return False
-    return True
+            sock.bind(addr)
+        except OSError as e:
+            if e.errno == errno.EADDRINUSE:
+                return f"Port {port} on {host} is already in use.", "Pick another with --port."
+            if e.errno in (errno.EACCES, errno.EPERM):
+                hint = (
+                    "Ports below 1024 need administrator rights; use --port 8765 or higher."
+                    if port < 1024
+                    else "A firewall or sandbox may block it; try another --port or --host."
+                )
+                return f"Not allowed to listen on {where}.", hint
+            if e.errno == errno.EADDRNOTAVAIL:
+                return (
+                    f"{host} is not an address of this machine.",
+                    "Use 127.0.0.1 (this machine only) or 0.0.0.0 (all interfaces).",
+                )
+            return f"Cannot listen on {where}: {e.strerror or e}.", "Try another --port or --host."
+    return None
 
 
 def _display_url(host: str, port: int) -> str:
@@ -233,8 +260,9 @@ def serve(
     ] = False,
 ) -> None:
     """Start the faissight web UI for a FAISS index."""
-    if not _port_available(host, port):
-        raise _fail(f"Port {port} on {host} is already in use.", "Pick another with --port.")
+    problem = _bind_problem(host, port)
+    if problem is not None:
+        raise _fail(*problem)
     try:
         with console.status("Loading index…"):
             session = Session(

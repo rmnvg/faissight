@@ -137,6 +137,18 @@ export function Spinner({ label = 'Loading' }: { label?: string }) {
   )
 }
 
+/** Restarts failed background work (projections, analyses). */
+export function RetryButton({ onClick }: { onClick: () => void }) {
+  return (
+    <button
+      onClick={onClick}
+      className="mt-2 rounded-lg border border-line bg-surface px-3 py-1.5 text-sm font-medium text-ink hover:bg-accent-wash"
+    >
+      Try again
+    </button>
+  )
+}
+
 export function EmptyState({ title, children }: { title: string; children?: ReactNode }) {
   return (
     <div className="flex h-full min-h-40 flex-col items-center justify-center gap-1 p-6 text-center">

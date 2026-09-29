@@ -24,7 +24,7 @@ import type {
 } from '../api/types'
 import { ScatterMap, type HoverTarget, type Marker } from '../components/ScatterMap'
 import { fillColors } from '../lib/points'
-import { Banner, Card, EmptyState, Progress, ReasonBadge, Segmented, SnippetText, Spinner, StatTile } from '../components/ui'
+import { Banner, Card, EmptyState, Progress, RetryButton, ReasonBadge, Segmented, SnippetText, Spinner, StatTile } from '../components/ui'
 import { fmtDist, fmtNum } from '../lib/format'
 import { useMapData } from '../lib/mapData'
 import { downloadCSV, downloadJSON } from '../lib/exportData'
@@ -441,7 +441,7 @@ function QueryMap({
   mode: ThemeMode
   isIvf: boolean
 }) {
-  const { data, status, error } = useMapData('pca', 2, isIvf)
+  const { data, status, error, retry } = useMapData('pca', 2, isIvf)
   const [hover, setHover] = useState<HoverTarget | null>(null)
   const colors = CANVAS[mode]
   const probed = useMemo(
@@ -523,7 +523,12 @@ function QueryMap({
             }}
           />
         ) : error ? (
-          <EmptyState title="Map unavailable">{error.message}</EmptyState>
+          <EmptyState title="Map unavailable">
+            {error.message}
+            <div>
+              <RetryButton onClick={retry} />
+            </div>
+          </EmptyState>
         ) : status ? (
           <div className="flex h-full items-center justify-center">
             <Progress value={status.progress} message={status.message} />

@@ -60,7 +60,7 @@ def test_same_key_is_deduplicated() -> None:
     assert runner.get("other") is None
 
 
-def test_failed_job_reports_and_restarts() -> None:
+def test_failed_job_is_kept_until_an_explicit_retry() -> None:
     attempts = []
 
     def flaky(progress):
@@ -74,10 +74,43 @@ def test_failed_job_reports_and_restarts() -> None:
     job.wait(5)
     assert job.status is JobStatus.FAILED
     assert job.as_dict()["error"] == "boom"
-    retry = runner.get_or_start("k", flaky)
+    # Polling must report the failure, not quietly start over.
+    assert runner.get_or_start("k", flaky) is job
+    assert len(attempts) == 1
+    retry = runner.get_or_start("k", flaky, retry=True)
     assert retry is not job
     retry.wait(5)
     assert retry.result == "ok"
+    assert runner.get_or_start("k", flaky, retry=True) is retry  # finished work isn't redone
+
+
+def test_cancelled_job_is_kept_until_an_explicit_retry() -> None:
+    gate = threading.Event()
+
+    def slow(progress):
+        gate.wait(5)
+        progress(0.5, "checkpoint")
+        return "ok"
+
+    runner = JobRunner()
+    job = runner.get_or_start("k", slow)
+    runner.cancel("k")
+    gate.set()
+    job.wait(5)
+    assert job.status is JobStatus.CANCELLED
+    assert runner.get_or_start("k", slow) is job
+    again = runner.get_or_start("k", slow, retry=True)
+    assert again.wait(5)
+    assert again.result == "ok"
+
+
+def test_run_sync_retries_a_failure() -> None:
+    runner = JobRunner()
+    with pytest.raises(ValueError, match="bad"):
+        runner.run_sync("k", lambda p: (_ for _ in ()).throw(ValueError("bad")))
+    with pytest.raises(ValueError, match="bad"):
+        runner.run_sync("k", lambda p: 1)  # still the kept failure
+    assert runner.run_sync("k", lambda p: 1, retry=True) == 1
 
 
 def test_run_sync_reraises() -> None:
@@ -142,7 +175,7 @@ def test_queue_capacity_cancel_and_retry() -> None:
         assert queued.wait(1)
         assert queued.status is JobStatus.CANCELLED
         assert not calls
-        retry = runner.get_or_start("queued", lambda p: 7)
+        retry = runner.get_or_start("queued", lambda p: 7, retry=True)
         assert runner.cancel("running")
     finally:
         release.set()
@@ -192,7 +225,7 @@ def test_retried_job_is_retained_as_recent() -> None:
     with pytest.raises(ValueError, match="retry me"):
         runner.run_sync("a", lambda p: (_ for _ in ()).throw(ValueError("retry me")))
     runner.run_sync("b", lambda p: 2)
-    runner.run_sync("a", lambda p: 3)
+    runner.run_sync("a", lambda p: 3, retry=True)
     runner.run_sync("c", lambda p: 4)
     assert runner.get("a").result == 3
     assert runner.get("b") is None
