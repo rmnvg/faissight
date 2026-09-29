@@ -14,6 +14,7 @@ from typing import Annotated
 import typer
 import uvicorn
 from rich.console import Console
+from rich.markup import escape
 from rich.progress import BarColumn, Progress, SpinnerColumn, TextColumn
 from rich.table import Table
 
@@ -75,9 +76,10 @@ err_console = Console(stderr=True)
 
 
 def _fail(message: str, hint: str | None = None) -> typer.Exit:
-    err_console.print(f"[bold red]Error:[/] {message}")
+    # Escape: hints contain things like faissight[all] that Rich would read as markup.
+    err_console.print(f"[bold red]Error:[/] {escape(message)}")
     if hint:
-        err_console.print(f"[dim]Hint: {hint}[/]")
+        err_console.print(f"[dim]Hint: {escape(hint)}[/]")
     return typer.Exit(code=1)
 
 
@@ -395,4 +397,59 @@ def _print_sweep(result: SweepResult, rec: SweepPoint | None, target: float) -> 
     console.print(
         f"Recommended [bold]{result.param.value}={rec.value}[/]: recall {rec.recall:.3f} at "
         f"{rec.latency_mean_ms:.3f} ms/query{faster}."
+    )
+
+
+DEMO_INDEXES = {"ivf_pq": "ivf_pq.index", "ivf_flat": "ivf_flat.index", "hnsw": "hnsw_flat.index"}
+DEMO_HINT = 'The demo needs the text and parquet extras: pip install "faissight[all]".'
+
+
+@app.command()
+def demo(
+    index: Annotated[
+        str, typer.Option(help="Which demo index to open: ivf_pq, ivf_flat or hnsw.")
+    ] = "ivf_pq",
+    data_dir: Annotated[
+        Path | None, typer.Option(help="Where to keep the demo data (default: the cache).")
+    ] = None,
+    max_chunks: Annotated[
+        int, typer.Option(help="Passage chunks to embed on first build.")
+    ] = 10_000,
+    rebuild: Annotated[bool, typer.Option("--rebuild", help="Rebuild even if built.")] = False,
+    port: Annotated[int, typer.Option(help="Port to listen on.")] = 8765,
+    host: Annotated[str, typer.Option(help="Interface to bind.")] = "127.0.0.1",
+    no_browser: Annotated[bool, typer.Option("--no-browser", help="Don't open a browser.")] = False,
+) -> None:
+    """Build (first run only) and open a RAG demo: real passages, MiniLM embeddings, 3 indexes."""
+    import importlib.util
+
+    from faissight import demo as demo_mod
+
+    if index not in DEMO_INDEXES:
+        raise _fail(f"Unknown --index {index!r}.", f"Use one of: {', '.join(DEMO_INDEXES)}.")
+    out = data_dir or demo_mod.default_dir()
+    if rebuild or not demo_mod.is_built(out):
+        missing = [
+            m for m in ("sentence_transformers", "pyarrow") if importlib.util.find_spec(m) is None
+        ]
+        if missing:
+            raise _fail(f"Missing {', '.join(missing)}.", DEMO_HINT)
+        console.print(f"Building the RAG demo in [bold]{out}[/] (first run only, ~1 minute)…")
+        try:
+            demo_mod.build_demo(out, max_chunks=max_chunks)
+        except OSError as e:
+            raise _fail(f"Could not build the demo: {e}", "Check your internet connection.") from e
+    serve(
+        index_path=out / DEMO_INDEXES[index],
+        vectors=out / "vectors.npy",
+        ids=None,
+        meta=out / "chunks.jsonl",
+        embedder="all-MiniLM-L6-v2",
+        queries=out / "queries.npy",
+        host=host,
+        port=port,
+        no_browser=no_browser,
+        max_points=DEFAULT_MAX_POINTS,
+        normalize_text=True,
+        no_cache=False,
     )

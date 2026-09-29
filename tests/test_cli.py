@@ -337,3 +337,11 @@ def test_sweep_flat_and_missing(synthetic, tmp_path) -> None:
     missing = runner.invoke(app, ["sweep", str(tmp_path / "x.index")])
     assert missing.exit_code == 1
     assert "not found" in missing.output
+
+
+def test_error_hints_keep_brackets(synthetic, monkeypatch) -> None:
+    # Rich markup would swallow "[faiss-cpu]" in the install hint.
+    monkeypatch.setitem(sys.modules, "faiss", None)
+    result = runner.invoke(app, ["info", str(synthetic["ivf_flat"])])
+    assert result.exit_code == 1
+    assert "faissight[faiss-cpu]" in result.output
