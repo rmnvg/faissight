@@ -90,17 +90,17 @@ test('a newer search cancels the one still in flight', async ({ page }) => {
     }
     await route.continue().catch(() => {})  // the browser may have cancelled it meanwhile
   })
-  // Record which searches the client itself aborted.
-  await page.addInitScript(() => {
-    const w = window as unknown as { aborted: unknown[] }
-    w.aborted = []
+  // Record which searches the client itself aborted. In-page code is a string because
+  // e2e/ is type-checked without DOM types.
+  await page.addInitScript(`
+    window.aborted = []
     const fetch = window.fetch
     window.fetch = (input, init) => {
       if (String(input).endsWith('api/search'))
-        init?.signal?.addEventListener('abort', () => w.aborted.push(JSON.parse(String(init.body)).query.id))
+        init?.signal?.addEventListener('abort', () => window.aborted.push(JSON.parse(init.body).query.id))
       return fetch(input, init)
     }
-  })
+  `)
   await page.reload()
   await page.getByRole('radio', { name: 'Stored id' }).click()
   await page.getByPlaceholder('e.g. 42').fill('7')
@@ -110,10 +110,10 @@ test('a newer search cancels the one still in flight', async ({ page }) => {
   const second = page.waitForResponse(
     (r) => r.url().endsWith('/api/search') && r.request().postDataJSON().query.id === 8,
   )
-  await page.evaluate(() => { window.location.hash = '#/query?id=8' })
+  await page.evaluate(`location.hash = '#/query?id=8'`)
   const expected = (await (await second).json()).results[0]
   await expect(page.getByText('Recall@10')).toBeVisible()
-  expect(await page.evaluate(() => (window as unknown as { aborted: unknown[] }).aborted)).toEqual([7])
+  expect(await page.evaluate('window.aborted')).toEqual([7])
   const firstResult = page.locator('section', { hasText: 'Approximate results' }).locator('tbody tr').first()
   await expect(firstResult.getByRole('button', { name: String(expected.id), exact: true })).toBeVisible()
   await expect(page.getByRole('alert')).toHaveCount(0)
