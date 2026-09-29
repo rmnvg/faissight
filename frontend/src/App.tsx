@@ -9,6 +9,7 @@ import { Overview } from './views/Overview'
 // deck.gl is heavy; only load it when a map view is opened.
 const ClusterMap = lazy(() => import('./views/ClusterMap'))
 const QueryExplorer = lazy(() => import('./views/QueryExplorer'))
+const Tuner = lazy(() => import('./views/Tuner'))
 
 export default function App() {
   const info = useInfo()
@@ -49,6 +50,7 @@ export default function App() {
           >
             {view === 'overview' && <Overview info={info.data} />}
             {view === 'map' && <ClusterMap info={info.data} params={route.params} mode={mode} />}
+            {view === 'tuner' && <Tuner info={info.data} params={route.params} />}
             {view === 'query' && (
               <QueryExplorer info={info.data} params={route.params} mode={mode} />
             )}

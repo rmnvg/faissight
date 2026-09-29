@@ -10,6 +10,8 @@ import type {
   ProjectionOrStatus,
   SearchRequest,
   SearchResponse,
+  SweepJob,
+  SweepRequest,
 } from './types'
 
 /** A structured API error ({error_code, message, hint}) or a network failure. */
@@ -80,4 +82,7 @@ export const api = {
   search: (req: SearchRequest) => post<SearchResponse>('search', req),
   traceIvf: (req: SearchRequest) => post<IvfTrace>('trace/ivf', req),
   metadata: (id: number) => get<MetadataRow>(`metadata/${id}`),
+  /** Starts (or reuses) a sweep; the job may still be running (HTTP 202). */
+  startSweep: (req: SweepRequest) => post<SweepJob>('sweep', req),
+  sweep: (jobId: string) => get<SweepJob>(`sweep/${encodeURIComponent(jobId)}`),
 }

@@ -36,6 +36,12 @@ export function Sidebar({
     { view: 'overview', label: 'Overview', hint: 'Index health', enabled: true },
     { view: 'map', label: 'Cluster map', hint: 'Projected vectors', enabled: supported },
     { view: 'query', label: 'Query explorer', hint: 'Why did it miss?', enabled: supported },
+    {
+      view: 'tuner',
+      label: 'Tuner',
+      hint: 'Recall vs latency',
+      enabled: supported && info?.sweep != null,
+    },
   ]
   return (
     <aside className="flex w-64 shrink-0 flex-col gap-4 border-r border-line bg-surface p-4">

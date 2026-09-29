@@ -197,3 +197,29 @@ def test_pareto() -> None:
     ]
     res = W.SweepResult(W.SweepParam.NPROBE, 10, 5, "sampled", False, pts)
     assert [p.value for p in res.pareto()] == [1, 2, 8]
+
+
+@pytest.mark.parametrize(
+    ("spec", "param", "read"),
+    [
+        ("IDMap,IVF8,Flat", "nprobe", lambda i: faiss.extract_index_ivf(i).nprobe),
+        ("PCA8,IVF8,Flat", "nprobe", lambda i: faiss.extract_index_ivf(i).nprobe),
+        ("IVF8,PQ4x4,RFlat", "nprobe", lambda i: faiss.extract_index_ivf(i).nprobe),
+        (
+            "IDMap,HNSW16",
+            "efSearch",
+            lambda i: faiss.downcast_index(faiss.downcast_index(i).index).hnsw.efSearch,
+        ),
+    ],
+)
+def test_tuner_snippet_parameter_space_works_through_wrappers(spec, param, read) -> None:
+    # The Tuner's "Apply it" snippet tells users to use ParameterSpace; keep that true.
+    x = np.random.default_rng(0).standard_normal((1000, 16)).astype(np.float32)
+    index = faiss.index_factory(16, spec)
+    index.train(x)
+    if spec.startswith("IDMap"):
+        index.add_with_ids(x, np.arange(1000))
+    else:
+        index.add(x)
+    faiss.ParameterSpace().set_index_parameter(index, param, 7)
+    assert read(index) == 7

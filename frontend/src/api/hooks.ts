@@ -55,3 +55,15 @@ export function useMetadata(id: number | null, enabled: boolean) {
     retry: false,
   })
 }
+
+/** Poll a sweep job until it finishes. */
+export function useSweep(jobId: string | null) {
+  return useQuery({
+    queryKey: ['sweep', jobId],
+    queryFn: () => api.sweep(jobId as string),
+    enabled: jobId !== null,
+    staleTime: Infinity,
+    retry: false,
+    refetchInterval: (q) => (q.state.data?.status === 'running' ? 400 : false),
+  })
+}

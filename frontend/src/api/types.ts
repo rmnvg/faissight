@@ -38,6 +38,7 @@ export interface Info {
   unsupported_reason: string | null
   ground_truth_source: 'raw' | 'reconstructed' | null
   max_points: number
+  sweep: { param: SweepParam; values: number[]; max_value: number | null } | null
   inputs: {
     raw_vectors: boolean
     metadata_rows: number | null
@@ -172,4 +173,39 @@ export interface IvfTrace {
 export interface MetadataRow {
   id: number
   row: Record<string, unknown>
+}
+
+export type SweepParam = 'nprobe' | 'efSearch'
+
+export interface SweepPoint {
+  value: number
+  recall: number
+  latency_mean_ms: number
+  latency_p95_ms: number
+}
+
+export interface SweepResult {
+  param: SweepParam
+  k: number
+  n_queries: number
+  query_origin: 'given' | 'sampled'
+  truth_source: 'raw' | 'reconstructed'
+  points: SweepPoint[]
+  pareto_values: number[]
+}
+
+export interface SweepJob {
+  job_id: string
+  status: 'running' | 'done' | 'failed'
+  progress: number
+  message: string
+  error: string | null
+  result: SweepResult | null
+}
+
+export interface SweepRequest {
+  param?: SweepParam
+  values?: number[]
+  k: number
+  n_queries: number
 }

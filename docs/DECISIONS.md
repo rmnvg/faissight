@@ -50,3 +50,6 @@ One line per non-obvious technical decision.
 - `recommend(target)` picks the smallest parameter value that meets the target recall, not the lowest measured latency, because latency is noisy and cost grows with the parameter.
 - Like `search`, the `sweep` function is not re-exported from `faissight.core` (it would shadow the `core.sweep` module); call `core.sweep.sweep(...)`.
 - Sweep jobs are keyed by (param, sorted values, k, n_queries) and addressed by a 12-char sha1 `job_id`; re-POSTing the same sweep returns the existing job (200 once done), so reloads don't re-run it. Values are validated before a job starts so errors surface as immediate 400s.
+- Tuner charts: recall, latency and recall-vs-latency are three separate single-axis charts (never dual-axis). The x-axis is log2 when values span 8x or more. Only the endpoints and the recommendation are direct-labelled; the table is the full text twin.
+- The "Apply it" snippet recommends `faiss.ParameterSpace().set_index_parameter`, verified (and tested) to work through IDMap, PreTransform and Refine wrappers and on HNSW.
+- Vitest (approved) covers the frontend's pure logic (`lib/*.test.ts`); CI runs typecheck, oxlint, Vitest and the build.
