@@ -102,7 +102,7 @@ def list_stats(li: LoadedIndex, top: int = 20) -> ListStats:
     )
 
 
-def _stored_ids(ivf: Any, list_no: int) -> IntArray:
+def stored_ids(ivf: Any, list_no: int) -> IntArray:
     """Ids stored in one inverted list (without copying its codes).
 
     These are internal offsets when an IDMap wraps the IVF, and user ids when vectors
@@ -126,7 +126,7 @@ def list_members(li: LoadedIndex, list_no: int) -> IntArray:
     ivf = _ivf(li)
     if not 0 <= list_no < ivf.nlist:
         raise IndexError(f"list_no {list_no} out of range [0, {ivf.nlist}).")
-    return li.user_ids(_stored_ids(ivf, list_no))
+    return li.user_ids(stored_ids(ivf, list_no))
 
 
 def centroids(li: LoadedIndex) -> FloatArray:
@@ -141,7 +141,7 @@ def centroids(li: LoadedIndex) -> FloatArray:
 def assignments(li: LoadedIndex) -> Assignments:
     """Map every user-facing id to its inverted list. O(ntotal); cache the result."""
     ivf = _ivf(li)
-    per_list = [li.user_ids(_stored_ids(ivf, i)) for i in range(ivf.nlist)]
+    per_list = [li.user_ids(stored_ids(ivf, i)) for i in range(ivf.nlist)]
     ids = np.concatenate(per_list) if per_list else np.empty(0, dtype=np.int64)
     list_nos = np.repeat(np.arange(ivf.nlist, dtype=np.int64), [len(p) for p in per_list])
     order = np.argsort(ids, kind="stable")

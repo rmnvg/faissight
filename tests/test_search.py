@@ -3,6 +3,7 @@ import numpy as np
 import pytest
 
 from faissight.core import search as S
+from faissight.core import vectors as V
 from faissight.core.loader import load_index
 from faissight.core.types import Metric
 from tests.conftest import SMALL
@@ -126,3 +127,71 @@ def test_search_bad_inputs(synthetic) -> None:
         S.search(li, np.zeros(D), 0)
     with pytest.raises(ValueError, match="Cannot search"):
         S.search(load_index(faiss.IndexLSH(8, 16)), np.zeros(8), 5)
+
+
+# --- ground truth & recall -----------------------------------------------------
+
+
+def test_ground_truth_matches_flat_index(synthetic, data) -> None:
+    li = load_index(synthetic["flat_l2"])
+    gt = S.GroundTruth(V.from_arrays(li, data["x"]), li.metric)
+    assert not gt.reconstructed
+    for q in data["queries"][:10]:
+        np.testing.assert_array_equal(gt.search(q, 10).ids, S.search(li, q, 10).ids)
+
+
+@pytest.mark.parametrize(("name", "vec_key"), [("ivf_flat", "x"), ("ivf_flat_ip", "xn")])
+def test_full_probe_recall_is_one(synthetic, data, name, vec_key) -> None:
+    # Acceptance: IVFFlat with nprobe=nlist is exhaustive, so recall@10 == 1.0.
+    li = load_index(synthetic[name])
+    gt = S.GroundTruth(V.from_arrays(li, data[vec_key]), li.metric)
+    queries = data["queries"]
+    if li.metric is Metric.IP:
+        queries = queries / np.linalg.norm(queries, axis=1, keepdims=True)
+    for q in queries:
+        found = S.search(li, q, 10, nprobe=NLIST)
+        truth = gt.search(q, 10)
+        assert S.recall_at_k(found.ids, truth.ids) == 1.0
+        np.testing.assert_allclose(found.distances, truth.distances, rtol=1e-4, atol=1e-3)
+
+
+def test_ground_truth_ip_orders_by_similarity(synthetic, data) -> None:
+    li = load_index(synthetic["ivf_flat_ip"])
+    gt = S.GroundTruth(V.from_arrays(li, data["xn"]), li.metric)
+    r = gt.search(data["xn"][0], 5)
+    assert r.metric is Metric.IP
+    assert r.ids[0] == 0
+    assert (np.diff(r.distances) <= 0).all()
+
+
+def test_ground_truth_user_ids_and_exclusion(synthetic, data) -> None:
+    li = load_index(synthetic["idmap_flat"])
+    ids = data["ids_idmap"]
+    gt = S.GroundTruth(V.from_arrays(li, data["x"], ids), li.metric)
+    r = gt.search(data["x"][4], 5)
+    assert r.ids[0] == ids[4]
+    r2 = gt.search(data["x"][4], 5, exclude_id=int(ids[4]))
+    assert ids[4] not in r2.ids
+    assert len(r2.ids) == 5
+    np.testing.assert_array_equal(r2.ids[:4], r.ids[1:])
+
+
+def test_ground_truth_on_reconstructed(synthetic) -> None:
+    li = load_index(synthetic["ivf_pq"])
+    gt = S.GroundTruth(V.reconstruct_all(li), li.metric)
+    assert gt.reconstructed
+
+
+@pytest.mark.parametrize(
+    ("found", "truth", "expected"),
+    [
+        ([1, 2, 3], [1, 2, 3], 1.0),
+        ([3, 2, 1], [1, 2, 3], 1.0),
+        ([1, 9, 8], [1, 2, 3, 4], 0.25),
+        ([7], [1, 2], 0.0),
+        ([1, -1], [1, -1], 1.0),
+        ([], [], 1.0),
+    ],
+)
+def test_recall_at_k(found, truth, expected) -> None:
+    assert S.recall_at_k(found, truth) == pytest.approx(expected)

@@ -11,6 +11,7 @@ import numpy.typing as npt
 
 from faissight.core._faiss import import_faiss
 from faissight.core.types import LoadedIndex, Metric
+from faissight.core.vectors import VectorSource
 
 IntArray = npt.NDArray[np.int64]
 FloatArray = npt.NDArray[np.float32]
@@ -116,3 +117,50 @@ def _drop_excluded(
         keep = ids != exclude_id
         ids, distances = ids[keep], distances[keep]
     return ids[:k].astype(np.int64), distances[:k].astype(np.float32)
+
+
+class GroundTruth:
+    """Exact k-NN over a :class:`VectorSource`, using the same metric as the index.
+
+    Builds a brute-force ``IndexFlat`` (costs ``n * d * 4`` bytes on top of the source).
+    """
+
+    def __init__(self, source: VectorSource, metric: Metric) -> None:
+        faiss = import_faiss()
+        if metric is Metric.OTHER:
+            raise ValueError("Ground truth needs an L2 or inner-product metric.")
+        self.source = source
+        self.metric = metric
+        d = source.vectors.shape[1]
+        faiss_metric = faiss.METRIC_L2 if metric is Metric.L2 else faiss.METRIC_INNER_PRODUCT
+        self._index = faiss.IndexFlat(d, faiss_metric)
+        self._index.add(source.vectors)
+
+    @property
+    def reconstructed(self) -> bool:
+        """True when computed on vectors decoded from the index, not the raw vectors."""
+        return self.source.reconstructed
+
+    def search(self, query: npt.ArrayLike, k: int, exclude_id: int | None = None) -> SearchResult:
+        """Exact top-k (user-facing ids), optionally excluding one id."""
+        q = _as_query(query, self._index.d)
+        k_search = min(k + (exclude_id is not None), max(len(self.source), 1))
+        t0 = time.perf_counter()
+        distances, rows = self._index.search(q, k_search)
+        latency_ms = (time.perf_counter() - t0) * 1000
+        rows = rows[0]
+        ids = np.where(rows >= 0, self.source.ids[np.maximum(rows, 0)], -1)
+        ids, dist = _drop_excluded(ids, distances[0], exclude_id, k)
+        return SearchResult(ids, dist, self.metric, latency_ms)
+
+
+def recall_at_k(found: npt.ArrayLike, truth: npt.ArrayLike) -> float:
+    """Fraction of the true neighbours (ignoring ``-1`` slots) present in ``found``.
+
+    Returns 1.0 when there are no true neighbours to find.
+    """
+    truth_ids = np.asarray(truth, dtype=np.int64)
+    truth_ids = truth_ids[truth_ids >= 0]
+    if len(truth_ids) == 0:
+        return 1.0
+    return float(np.isin(truth_ids, np.asarray(found, dtype=np.int64)).mean())

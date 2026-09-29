@@ -18,3 +18,8 @@ One line per non-obvious technical decision.
 - IVF centroids of a PreTransform index are returned in the transformed space (`core_d`); anything comparing them to raw vectors must apply the transform first.
 - `list_members`/`assignments` read ids via `invlists.get_ids` directly instead of `inspect_tools.get_invlist`, which also copies every list's codes.
 - `imbalance_factor` returns 0.0 for an empty index (FAISS returns NaN, which isn't valid JSON).
+- Search parameters go through `SearchParametersIVF/HNSW` per call, never by mutating `nprobe`/`efSearch`. `IndexRefine` needs them wrapped in `IndexRefineSearchParameters` with the index's own `k_factor` (its default of 1 would change results).
+- Self-exclusion searches k+1 and drops the query's own id, so the caller still gets k results.
+- New `core/vectors.py` (not in the original layout): `VectorSource` holds input-space vectors sorted by user id, whether raw or reconstructed; ground truth, query-by-id, projection and PQ error all share it.
+- Reconstruction enables a direct map on IVF indexes (array for sequential ids, hashtable for `add_with_ids` ids). This mutates the index object but not its search results (tested).
+- Reconstructed vectors for PreTransform indexes are mapped back to input space with `reverse_transform`, which is lossy for PCA.
