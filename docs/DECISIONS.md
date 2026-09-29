@@ -49,3 +49,4 @@ One line per non-obvious technical decision.
 - Sweeps time each query individually around `index.search` only (no Python result handling inside the timed region), after one untimed warm-up pass, with FAISS pinned to 1 OpenMP thread. The pin is process-wide, so timed sweeps are serialised by a lock, and the previous thread count is restored even on error.
 - `recommend(target)` picks the smallest parameter value that meets the target recall, not the lowest measured latency, because latency is noisy and cost grows with the parameter.
 - Like `search`, the `sweep` function is not re-exported from `faissight.core` (it would shadow the `core.sweep` module); call `core.sweep.sweep(...)`.
+- Sweep jobs are keyed by (param, sorted values, k, n_queries) and addressed by a 12-char sha1 `job_id`; re-POSTing the same sweep returns the existing job (200 once done), so reloads don't re-run it. Values are validated before a job starts so errors surface as immediate 400s.

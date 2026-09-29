@@ -56,6 +56,26 @@ def default_values(li: LoadedIndex, param: SweepParam | str | None = None) -> li
     return list(DEFAULT_EF_VALUES)
 
 
+def check_values(
+    li: LoadedIndex, param: SweepParam | str | None, values: Sequence[int] | None
+) -> tuple[SweepParam, list[int]]:
+    """Resolve the parameter and values (defaults if ``None``), validating every value.
+
+    Raises ``ValueError`` for values the index rejects (e.g. nprobe > nlist).
+    """
+    p = SweepParam(param) if param is not None else param_for(li)
+    _check_param(li, p)
+    vals = sorted({int(v) for v in (values if values is not None else default_values(li, p))})
+    if not vals:
+        raise ValueError("Give at least one value to sweep.")
+    for v in vals:
+        if p is SweepParam.NPROBE:
+            resolve_search_params(li, nprobe=v)
+        else:
+            resolve_search_params(li, ef_search=v)
+    return p, vals
+
+
 def _check_param(li: LoadedIndex, param: SweepParam) -> None:
     if param is SweepParam.NPROBE and not li.kind.is_ivf:
         raise ValueError("nprobe sweeps need an IVF index.")
@@ -161,11 +181,7 @@ def sweep(
     untimed warm-up pass, so latencies are stable and comparable across values.
     """
     faiss = import_faiss()
-    param = SweepParam(param) if param is not None else param_for(li)
-    _check_param(li, param)
-    vals = sorted({int(v) for v in (values if values is not None else default_values(li, param))})
-    if not vals:
-        raise ValueError("Give at least one value to sweep.")
+    param, vals = check_values(li, param, values)
     if k < 1:
         raise ValueError(f"k must be >= 1, got {k}.")
     if truth.shape != (len(queries), k):
@@ -177,7 +193,7 @@ def sweep(
             return resolve_search_params(li, nprobe=v)[0]
         return resolve_search_params(li, ef_search=v)[0]
 
-    all_params = [params_for(v) for v in vals]  # validates every value before timing
+    all_params = [params_for(v) for v in vals]
     excl = queries.exclude_ids
     k_search = min(k + (excl is not None), max(li.ntotal, 1))
     n = len(queries)

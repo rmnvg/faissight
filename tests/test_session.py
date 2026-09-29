@@ -235,3 +235,30 @@ def test_concurrent_projection_and_queries(synthetic) -> None:
         t.join(30)
     assert not errors
     assert s.jobs.get(("projection", "pca", 2)).wait(10)
+
+
+def test_sweep_queries_given_vs_sampled(synthetic) -> None:
+    given = Session(synthetic["ivf_flat"], queries=synthetic["queries"]).sweep_queries(10)
+    assert (given.origin, len(given)) == ("given", 10)
+    sampled = Session(synthetic["ivf_flat"]).sweep_queries(25)
+    assert (sampled.origin, len(sampled)) == ("sampled", 25)
+    assert sampled.exclude_ids is not None
+
+
+def test_sweep_job_reconstructed_truth(synthetic) -> None:
+    s = Session(synthetic["ivf_pq"])
+    job_id, job = s.sweep_job(values=[1, NLIST], n_queries=20)
+    assert job.wait(30)
+    assert job.result.truth_reconstructed
+    assert s.get_sweep_job(job_id) is job
+    assert s.get_sweep_job("missing") is None
+    # Same parameters -> same id and job.
+    assert s.sweep_job(values=[NLIST, 1], n_queries=20) == (job_id, job)
+
+
+def test_sweep_job_validation(synthetic) -> None:
+    s = Session(synthetic["ivf_flat"])
+    with pytest.raises(ValueError, match="nprobe must be"):
+        s.sweep_job(values=[NLIST + 1])
+    with pytest.raises(ValueError, match=">= 1"):
+        s.sweep_job(k=0)

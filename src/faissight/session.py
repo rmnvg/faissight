@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import contextlib
+import hashlib
 import importlib.util
 import os
 import threading
@@ -36,6 +37,17 @@ from faissight.core.projection import (
     place_points,
 )
 from faissight.core.search import GroundTruth, QueryReport, explain_query, resolve_query
+from faissight.core.sweep import (
+    DEFAULT_N_QUERIES,
+    QuerySet,
+    SweepParam,
+    SweepResult,
+    check_values,
+    given_queries,
+    ground_truth_ids,
+    sample_queries,
+    sweep,
+)
 from faissight.core.types import LoadedIndex, Metric
 from faissight.core.vectors import (
     VectorMismatchError,
@@ -301,6 +313,59 @@ class Session:
             ref = self._once(key, lambda: core_vectors(self.li, self.source, proj.ids))
         placed: npt.NDArray[np.float32] = place_points(proj, x_core, ref)[0]
         return placed
+
+    # --- sweeps ---------------------------------------------------------------------------
+
+    def sweep_queries(self, n_queries: int = DEFAULT_N_QUERIES) -> QuerySet:
+        """The ``--queries`` set (first ``n_queries``) or ``n_queries`` sampled stored vectors."""
+        if self.queries is not None:
+            return given_queries(self.li, self.queries[:n_queries])
+        return self._once(
+            f"sweep_queries:{n_queries}", lambda: sample_queries(self.source, n_queries)
+        )
+
+    def sweep_job(
+        self,
+        param: SweepParam | str | None = None,
+        values: list[int] | None = None,
+        k: int = 10,
+        n_queries: int = DEFAULT_N_QUERIES,
+    ) -> tuple[str, Job[SweepResult]]:
+        """Validate, then start (or return) the background sweep. Returns ``(job_id, job)``."""
+        if not self.li.is_supported:
+            raise ValueError(f"Cannot sweep: {self.li.unsupported_reason}")
+        if k < 1 or n_queries < 1:
+            raise ValueError("k and n_queries must be >= 1.")
+        p, vals = check_values(self.li, param, values)
+        key = ("sweep", p.value, tuple(vals), k, n_queries)
+        job_id = hashlib.sha1(repr(key).encode()).hexdigest()[:12]
+
+        def work(progress: Callable[[float, str], None]) -> SweepResult:
+            progress(0.0, "Computing exact ground truth")
+            qs = self.sweep_queries(n_queries)
+            truth = self._once(
+                f"sweep_truth:{qs.origin}:{len(qs)}:{k}",
+                lambda: ground_truth_ids(self.ground_truth, qs, k),
+            )
+            return sweep(
+                self.li,
+                qs,
+                truth,
+                param=p,
+                values=vals,
+                k=k,
+                truth_reconstructed=not self.has_raw_vectors,
+                progress=progress,
+            )
+
+        with self._lock:
+            self._lazy.setdefault("sweep_ids", {})[job_id] = key
+        return job_id, self.jobs.get_or_start(key, work)
+
+    def get_sweep_job(self, job_id: str) -> Job[SweepResult] | None:
+        with self._lock:
+            key = self._lazy.get("sweep_ids", {}).get(job_id)
+        return self.jobs.get(key) if key is not None else None
 
     def start_background(self) -> None:
         """Kick off work the UI will want soon: the default projection and the embedder."""

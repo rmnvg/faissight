@@ -34,6 +34,13 @@ class InputsOut(BaseModel):
     queries: int | None
 
 
+class SweepDefaults(BaseModel):
+    param: Literal["nprobe", "efSearch"]
+    values: list[int]
+    max_value: int | None
+    """Largest accepted value (nlist for nprobe; None when unbounded)."""
+
+
 class InfoResponse(BaseModel):
     version: str
     name: str
@@ -53,6 +60,7 @@ class InfoResponse(BaseModel):
     unsupported_reason: str | None
     ground_truth_source: Literal["raw", "reconstructed"] | None
     max_points: int
+    sweep: SweepDefaults | None
     inputs: InputsOut
 
 
@@ -211,3 +219,39 @@ class MetadataResponse(BaseModel):
 
 class HealthResponse(BaseModel):
     status: Literal["ok"] = "ok"
+
+
+# --- sweep -------------------------------------------------------------------------------
+
+
+class SweepRequest(BaseModel):
+    param: Literal["nprobe", "efSearch"] | None = None
+    values: list[int] | None = Field(None, min_length=1, max_length=64)
+    k: int = Field(10, ge=1, le=1000)
+    n_queries: int = Field(200, ge=1, le=10_000)
+
+
+class SweepPointOut(BaseModel):
+    value: int
+    recall: float
+    latency_mean_ms: float
+    latency_p95_ms: float
+
+
+class SweepResultOut(BaseModel):
+    param: Literal["nprobe", "efSearch"]
+    k: int
+    n_queries: int
+    query_origin: Literal["given", "sampled"]
+    truth_source: Literal["raw", "reconstructed"]
+    points: list[SweepPointOut]
+    pareto_values: list[int]
+
+
+class SweepJobResponse(BaseModel):
+    job_id: str
+    status: Literal["running", "done", "failed"]
+    progress: float
+    message: str
+    error: str | None = None
+    result: SweepResultOut | None = None

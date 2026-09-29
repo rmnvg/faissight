@@ -321,3 +321,83 @@ def test_frontend_not_built(synthetic, tmp_path) -> None:
 
 def test_openapi_docs(ivf_client) -> None:
     assert ivf_client.get("/api/openapi.json").json()["info"]["title"] == "faissight"
+
+
+# --- sweep -------------------------------------------------------------------------------
+
+
+def _wait_sweep(client, job_id):
+    for _ in range(500):
+        r = client.get(f"/api/sweep/{job_id}")
+        if r.status_code != 202:
+            return r
+        time.sleep(0.01)
+    raise AssertionError("sweep never finished")
+
+
+def test_info_sweep_defaults(ivf_client, hnsw_client, synthetic) -> None:
+    s = ivf_client.get("/api/info").json()["sweep"]
+    assert s == {"param": "nprobe", "values": [1, 2, 4, 8, 16], "max_value": NLIST}
+    h = hnsw_client.get("/api/info").json()["sweep"]
+    assert h["param"] == "efSearch"
+    assert h["max_value"] is None
+    flat = _client(Session(synthetic["flat_l2"]))
+    assert flat.get("/api/info").json()["sweep"] is None
+
+
+def test_sweep_flow(ivf_client) -> None:
+    r = ivf_client.post("/api/sweep", json={"k": 10, "n_queries": 40})
+    assert r.status_code in (200, 202)
+    job_id = r.json()["job_id"]
+    body = _wait_sweep(ivf_client, job_id).json()
+    assert body["status"] == "done"
+    res = body["result"]
+    assert res["param"] == "nprobe"
+    # --queries was given to this session, so those are used (first n_queries of them).
+    assert (res["query_origin"], res["n_queries"], res["truth_source"]) == ("given", 40, "raw")
+    assert [p["value"] for p in res["points"]] == [1, 2, 4, 8, 16]
+    recalls = [p["recall"] for p in res["points"]]
+    assert recalls == sorted(recalls)
+    assert recalls[-1] == 1.0
+    assert set(res["pareto_values"]) <= {1, 2, 4, 8, 16}
+    # Same request -> same job, answered straight from the finished result.
+    again = ivf_client.post("/api/sweep", json={"k": 10, "n_queries": 40})
+    assert again.status_code == 200
+    assert again.json()["job_id"] == job_id
+
+
+def test_sweep_sampled_queries_hnsw(hnsw_client) -> None:
+    r = hnsw_client.post("/api/sweep", json={"values": [16, 64], "n_queries": 30})
+    body = _wait_sweep(hnsw_client, r.json()["job_id"]).json()
+    res = body["result"]
+    assert (res["param"], res["query_origin"]) == ("efSearch", "sampled")
+    assert [p["value"] for p in res["points"]] == [16, 64]
+
+
+@pytest.mark.parametrize(
+    ("payload", "status", "code"),
+    [
+        ({"values": [NLIST + 1]}, 400, "BAD_REQUEST"),
+        ({"param": "efSearch"}, 400, "BAD_REQUEST"),
+        ({"values": []}, 422, "VALIDATION_ERROR"),
+        ({"k": 0}, 422, "VALIDATION_ERROR"),
+        ({"n_queries": 0}, 422, "VALIDATION_ERROR"),
+    ],
+)
+def test_sweep_errors(ivf_client, payload, status, code) -> None:
+    _assert_error(ivf_client.post("/api/sweep", json=payload), status, code)
+
+
+def test_sweep_unknown_job(ivf_client) -> None:
+    _assert_error(ivf_client.get("/api/sweep/nope"), 404, "NOT_FOUND")
+
+
+def test_sweep_flat_index(synthetic) -> None:
+    client = _client(Session(synthetic["flat_l2"]))
+    body = _assert_error(client.post("/api/sweep", json={}), 400, "BAD_REQUEST")
+    assert "no search parameter" in body["message"]
+
+
+def test_sweep_unsupported(binary_index_path) -> None:
+    client = _client(Session(binary_index_path))
+    _assert_error(client.post("/api/sweep", json={}), 400, "UNSUPPORTED_INDEX")

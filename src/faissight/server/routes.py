@@ -11,9 +11,10 @@ from fastapi.responses import JSONResponse
 
 from faissight import __version__
 from faissight.core import ivf
-from faissight.core.jobs import JobStatus
+from faissight.core.jobs import Job, JobStatus
 from faissight.core.projection import Projection
 from faissight.core.search import MissReason, NeighbourTrace, QueryReport
+from faissight.core.sweep import SweepResult, default_values, param_for
 from faissight.server import schemas as S
 from faissight.session import Session
 
@@ -116,6 +117,7 @@ def info(session: SessionDep) -> S.InfoResponse:
         unsupported_reason=li.unsupported_reason,
         ground_truth_source=_truth_source(session) if li.is_supported else None,
         max_points=session.max_points,
+        sweep=_sweep_defaults(session),
         inputs=S.InputsOut(
             raw_vectors=session.has_raw_vectors,
             metadata_rows=len(md) if md is not None else None,
@@ -364,3 +366,69 @@ def trace_ivf(req: S.SearchRequest, session: IvfDep) -> S.IvfTraceResponse:
         probes=probes,
         neighbours=_truth_rows(session, report, trace.neighbours) or [],
     )
+
+
+# --- sweep -------------------------------------------------------------------------------
+
+
+def _sweep_defaults(session: Session) -> S.SweepDefaults | None:
+    li = session.li
+    if not li.is_supported or not (li.kind.is_ivf or li.kind.is_hnsw):
+        return None
+    param = param_for(li)
+    return S.SweepDefaults(
+        param=param.value,
+        values=default_values(li, param),
+        max_value=int(li.ivf.nlist) if li.kind.is_ivf else None,
+    )
+
+
+def _sweep_response(job_id: str, job: Job[SweepResult], session: Session) -> JSONResponse:
+    result = None
+    if job.is_done and job.result is not None:
+        r = job.result
+        result = S.SweepResultOut(
+            param=r.param.value,
+            k=r.k,
+            n_queries=r.n_queries,
+            query_origin=r.query_origin,
+            truth_source="reconstructed" if r.truth_reconstructed else "raw",
+            points=[
+                S.SweepPointOut(
+                    value=p.value,
+                    recall=p.recall,
+                    latency_mean_ms=p.latency_mean_ms,
+                    latency_p95_ms=p.latency_p95_ms,
+                )
+                for p in r.points
+            ],
+            pareto_values=[p.value for p in r.pareto()],
+        )
+    body = S.SweepJobResponse(job_id=job_id, result=result, **job.as_dict())
+    status = 200 if job.status is not JobStatus.RUNNING else 202
+    return JSONResponse(status_code=status, content=body.model_dump())
+
+
+@router.post(
+    "/sweep",
+    response_model=S.SweepJobResponse,
+    responses={202: {"model": S.SweepJobResponse}},
+)
+def start_sweep(req: S.SweepRequest, session: SupportedDep) -> JSONResponse:
+    """Start (or reuse) a background sweep; poll ``GET /sweep/{job_id}`` until done."""
+    job_id, job = session.sweep_job(req.param, req.values, req.k, req.n_queries)
+    return _sweep_response(job_id, job, session)
+
+
+@router.get(
+    "/sweep/{job_id}",
+    response_model=S.SweepJobResponse,
+    responses={202: {"model": S.SweepJobResponse}},
+)
+def get_sweep(job_id: str, session: SessionDep) -> JSONResponse:
+    job = session.get_sweep_job(job_id)
+    if job is None:
+        raise ApiError(
+            404, "NOT_FOUND", f"No sweep with id {job_id}.", "Start one with POST /api/sweep."
+        )
+    return _sweep_response(job_id, job, session)
