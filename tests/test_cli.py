@@ -240,3 +240,100 @@ def test_serve_real_subprocess(synthetic, tmp_path) -> None:
     finally:
         proc.terminate()
         proc.wait(10)
+
+
+# --- sweep ---------------------------------------------------------------------------------
+
+
+def test_sweep_table(synthetic) -> None:
+    result = runner.invoke(
+        app,
+        [
+            "sweep",
+            str(synthetic["ivf_flat"]),
+            "--vectors",
+            str(synthetic["vectors"]),
+            "--n-queries",
+            "30",
+        ],
+    )
+    assert result.exit_code == 0, result.output
+    assert "nprobe sweep" in result.output
+    assert "Recommended nprobe=" in result.output
+    assert "reconstructed" not in result.output
+
+
+def test_sweep_json(synthetic) -> None:
+    result = runner.invoke(
+        app,
+        [
+            "sweep",
+            str(synthetic["ivf_flat"]),
+            "--values",
+            "1, 16",
+            "--n-queries",
+            "20",
+            "--json",
+            "--target",
+            "0.99",
+        ],
+    )
+    assert result.exit_code == 0, result.output
+    body = json.loads(result.stdout)
+    assert [p["value"] for p in body["points"]] == [1, 16]
+    assert body["recommended"] == 16 or body["points"][0]["recall"] >= 0.99
+    assert body["truth_source"] == "reconstructed"
+    assert set(body["points"][0]) == {"value", "recall", "latency_mean_ms", "latency_p95_ms"}
+
+
+def test_sweep_given_queries(synthetic) -> None:
+    result = runner.invoke(
+        app, ["sweep", str(synthetic["ivf_flat"]), "--queries", str(synthetic["queries"]), "--json"]
+    )
+    assert result.exit_code == 0, result.output
+    assert json.loads(result.stdout)["query_origin"] == "given"
+
+
+def test_sweep_unreachable_target_exits_2(synthetic) -> None:
+    result = runner.invoke(
+        app,
+        [
+            "sweep",
+            str(synthetic["ivf_pq"]),
+            "--vectors",
+            str(synthetic["vectors"]),
+            "--values",
+            "1,2",
+            "--n-queries",
+            "20",
+            "--target",
+            "0.999",
+        ],
+    )
+    assert result.exit_code == 2
+    assert "No value reached recall 0.999" in result.output
+
+
+@pytest.mark.parametrize(
+    ("args", "message"),
+    [
+        (["--param", "bogus"], "Unknown --param"),
+        (["--param", "efSearch"], "HNSW"),
+        (["--values", "1,x"], "comma-separated"),
+        (["--values", "999"], "nprobe must be"),
+        (["--k", "0"], ">= 1"),
+    ],
+)
+def test_sweep_errors(synthetic, args, message) -> None:
+    result = runner.invoke(app, ["sweep", str(synthetic["ivf_flat"]), *args])
+    assert result.exit_code != 0
+    assert message in result.output
+
+
+def test_sweep_flat_and_missing(synthetic, tmp_path) -> None:
+    flat = runner.invoke(app, ["sweep", str(synthetic["flat_l2"])])
+    assert flat.exit_code == 1
+    assert "no search parameter" in flat.output
+    missing = runner.invoke(app, ["sweep", str(tmp_path / "x.index")])
+    assert missing.exit_code == 1
+    assert "not found" in missing.output

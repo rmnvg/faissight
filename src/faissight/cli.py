@@ -2,22 +2,26 @@
 
 from __future__ import annotations
 
+import json
 import socket
 import threading
 import time
 import webbrowser
+from dataclasses import asdict
 from pathlib import Path
 from typing import Annotated
 
 import typer
 import uvicorn
 from rich.console import Console
+from rich.progress import BarColumn, Progress, SpinnerColumn, TextColumn
 from rich.table import Table
 
 from faissight import __version__
 from faissight.core._faiss import FaissNotInstalledError
 from faissight.core.loader import IndexLoadError, load_index
 from faissight.core.projection import DEFAULT_MAX_POINTS
+from faissight.core.sweep import SweepPoint, SweepResult
 from faissight.core.types import LoadedIndex
 from faissight.server.app import create_app
 from faissight.session import InputError, Session
@@ -248,3 +252,145 @@ def serve(
     if not no_browser:
         _open_when_ready(server, url)
     server.run()
+
+
+def _values_option(text: str | None) -> list[int] | None:
+    if text is None:
+        return None
+    try:
+        values = [int(v) for v in text.replace(" ", "").split(",") if v]
+    except ValueError:
+        raise typer.BadParameter("Use comma-separated integers, e.g. 1,2,4,8.") from None
+    if not values:
+        raise typer.BadParameter("Give at least one value.")
+    return values
+
+
+@app.command()
+def sweep(
+    index_path: Annotated[Path, typer.Argument(help="Path to a FAISS index file.")],
+    vectors: Annotated[
+        Path | None, typer.Option(help="Raw vectors .npy for exact ground truth.")
+    ] = None,
+    ids: Annotated[Path | None, typer.Option(help="Ids .npy for --vectors.")] = None,
+    queries: Annotated[
+        Path | None, typer.Option(help="Query vectors .npy (default: sample stored vectors).")
+    ] = None,
+    param: Annotated[
+        str | None, typer.Option(help="nprobe (IVF) or efSearch (HNSW). Default: by index kind.")
+    ] = None,
+    values: Annotated[
+        str | None, typer.Option(help="Comma-separated values, e.g. 1,2,4,8. Default: a ladder.")
+    ] = None,
+    k: Annotated[int, typer.Option(help="Recall@k.")] = 10,
+    n_queries: Annotated[int, typer.Option(help="Queries to use.")] = 200,
+    target: Annotated[float, typer.Option(help="Target recall for the recommendation.")] = 0.95,
+    as_json: Annotated[bool, typer.Option("--json", help="Print JSON instead of a table.")] = False,
+) -> None:
+    """Measure recall@k and latency across nprobe/efSearch values.
+
+    Exits with code 2 if no value reaches --target, so it can gate CI.
+    """
+    parsed_values = _values_option(values)
+    if param is not None and param not in ("nprobe", "efSearch"):
+        raise _fail(f"Unknown --param {param!r}.", "Use nprobe (IVF) or efSearch (HNSW).")
+    try:
+        session = Session(index_path, vectors=vectors, ids=ids, queries=queries, disk_cache=False)
+        _, job = session.sweep_job(param, parsed_values, k, n_queries)
+    except FaissNotInstalledError as e:
+        raise _fail("FAISS is not installed.", e.hint) from e
+    except (FileNotFoundError, IndexLoadError) as e:
+        raise _fail(str(e)) from e
+    except InputError as e:
+        raise _fail(str(e), e.hint) from e
+    except ValueError as e:
+        raise _fail(str(e)) from e
+
+    with Progress(
+        SpinnerColumn(),
+        TextColumn("{task.description}"),
+        BarColumn(),
+        console=err_console,
+        transient=True,
+        disable=as_json,
+    ) as bar:
+        task = bar.add_task("Sweeping", total=1.0)
+        while not job.wait(0.1):
+            bar.update(task, completed=job.progress, description=job.message or "Sweeping")
+    if job.error is not None:
+        raise _fail(f"Sweep failed: {job.error}")
+    result = job.result
+    assert result is not None
+    rec = result.recommend(target)
+
+    if as_json:
+        typer.echo(
+            json.dumps(
+                {
+                    "param": result.param.value,
+                    "k": result.k,
+                    "n_queries": result.n_queries,
+                    "query_origin": result.query_origin,
+                    "truth_source": "reconstructed" if result.truth_reconstructed else "raw",
+                    "target": target,
+                    "recommended": rec.value if rec else None,
+                    "points": [asdict(p) for p in result.points],
+                },
+                indent=2,
+            )
+        )
+    else:
+        _print_sweep(result, rec, target)
+    if rec is None:
+        raise typer.Exit(code=2)
+
+
+def _print_sweep(result: SweepResult, rec: SweepPoint | None, target: float) -> None:
+    origin = "given" if result.query_origin == "given" else "sampled stored-vector"
+    console.print(
+        f"[bold]{result.param.value} sweep[/] · recall@{result.k} over {result.n_queries} "
+        f"{origin} queries · single-threaded latency"
+    )
+    if result.truth_reconstructed:
+        console.print(
+            "[yellow]Ground truth computed on reconstructed vectors; PQ/SQ error is not "
+            "measured.[/] Pass --vectors for exact ground truth."
+        )
+    table = Table()
+    table.add_column(result.param.value, justify="right")
+    table.add_column(f"recall@{result.k}", justify="right")
+    table.add_column("mean ms", justify="right")
+    table.add_column("p95 ms", justify="right")
+    table.add_column("")
+    for p in result.points:
+        mark = (
+            "[green]✓ recommended[/]"
+            if rec is not None and p.value == rec.value
+            else ("meets target" if p.recall >= target else "")
+        )
+        table.add_row(
+            str(p.value),
+            f"{p.recall:.3f}",
+            f"{p.latency_mean_ms:.3f}",
+            f"{p.latency_p95_ms:.3f}",
+            mark,
+        )
+    console.print(table)
+    if rec is None:
+        best = max(result.points, key=lambda p: p.recall)
+        console.print(
+            f"[red]No value reached recall {target:g}[/] (best {best.recall:.3f} at "
+            f"{result.param.value}={best.value}). Try larger values."
+        )
+        return
+    slowest = max(result.points, key=lambda p: p.value)
+    faster = (
+        f", {slowest.latency_mean_ms / rec.latency_mean_ms:.1f}x faster than "
+        f"{result.param.value}={slowest.value}"
+        if slowest.value != rec.value and rec.latency_mean_ms > 0
+        else ""
+    )
+    console.print(
+        f"Recommended [bold]{result.param.value}={rec.value}[/]: recall {rec.recall:.3f} at "
+        f"{rec.latency_mean_ms:.3f} ms/query{faster}."
+    )
