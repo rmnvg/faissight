@@ -156,6 +156,28 @@ class GroundTruth:
         ids, dist = _drop_excluded(ids, distances[0], exclude_id, k)
         return SearchResult(ids, dist, self.metric, latency_ms)
 
+    def search_batch(
+        self, queries: npt.ArrayLike, k: int, exclude_ids: npt.ArrayLike | None = None
+    ) -> IntArray:
+        """Exact top-k user ids for many queries, shape ``(n, k)`` (``-1`` pads short rows).
+
+        ``exclude_ids[i]`` is dropped from row ``i`` (queries that are stored vectors).
+        """
+        q = np.ascontiguousarray(queries, dtype=np.float32)
+        if q.ndim != 2 or q.shape[1] != self._index.d:
+            raise ValueError(f"Queries must have shape (n, {self._index.d}), got {q.shape}.")
+        excl = None if exclude_ids is None else np.asarray(exclude_ids, dtype=np.int64)
+        k_search = min(k + (excl is not None), max(len(self.source), 1))
+        _, rows = self._index.search(q, k_search)
+        ids = np.where(rows >= 0, self.source.ids[np.maximum(rows, 0)], -1)
+        out = np.full((len(q), k), -1, dtype=np.int64)
+        for i in range(len(q)):
+            row = ids[i]
+            if excl is not None:
+                row = row[row != excl[i]]
+            out[i, : min(k, len(row))] = row[:k]
+        return out
+
 
 def recall_at_k(found: npt.ArrayLike, truth: npt.ArrayLike) -> float:
     """Fraction of the true neighbours (ignoring ``-1`` slots) present in ``found``.

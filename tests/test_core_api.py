@@ -56,3 +56,12 @@ def test_search_module_not_shadowed() -> None:
 
     assert isinstance(search, types.ModuleType)
     assert callable(search.search)
+
+
+def test_sweep_module_not_shadowed() -> None:
+    import types
+
+    from faissight.core import sweep
+
+    assert isinstance(sweep, types.ModuleType)
+    assert callable(sweep.sweep)

@@ -46,3 +46,6 @@ One line per non-obvious technical decision.
 - Recharts animations are off (charts must not flash or re-animate on refetch). Probe-chart dots share the line's dataset, because a separate scatter dataset drives the y-domain on its own and clips the line.
 - `ScatterMap` derives its fitted view state during render and keeps user pan/zoom keyed to that framing, instead of calling setState in an effect.
 - Frontend tests (Vitest, Playwright) are listed in the plan's testing section but not in its dependency list; deferred until approved.
+- Sweeps time each query individually around `index.search` only (no Python result handling inside the timed region), after one untimed warm-up pass, with FAISS pinned to 1 OpenMP thread. The pin is process-wide, so timed sweeps are serialised by a lock, and the previous thread count is restored even on error.
+- `recommend(target)` picks the smallest parameter value that meets the target recall, not the lowest measured latency, because latency is noisy and cost grows with the parameter.
+- Like `search`, the `sweep` function is not re-exported from `faissight.core` (it would shadow the `core.sweep` module); call `core.sweep.sweep(...)`.

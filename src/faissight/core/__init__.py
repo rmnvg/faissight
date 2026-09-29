@@ -13,8 +13,9 @@ Typical flow::
     )
     report.recall, report.ivf_trace.min_nprobe_for_all
 
-A bare search is ``core.search.search(li, vector, k, nprobe=...)``. The function isn't
-re-exported here because it would shadow the ``core.search`` module.
+A bare search is ``core.search.search(li, vector, k, nprobe=...)`` and a sweep is
+``core.sweep.sweep(li, queries, truth, ...)``. Neither function is re-exported here because
+it would shadow its module.
 
 FAISS is imported lazily, so importing this package works without FAISS installed.
 """
@@ -62,6 +63,16 @@ from faissight.core.search import (
     resolve_query,
     trace_ivf,
 )
+from faissight.core.sweep import (
+    QuerySet,
+    SweepParam,
+    SweepPoint,
+    SweepResult,
+    default_values,
+    given_queries,
+    ground_truth_ids,
+    sample_queries,
+)
 from faissight.core.types import IndexKind, IndexParams, LoadedIndex, Metric, TransformInfo
 from faissight.core.vectors import VectorMismatchError, VectorSource, from_arrays, reconstruct_all
 
@@ -94,17 +105,24 @@ __all__ = [
     "QueryError",
     "QueryKind",
     "QueryReport",
+    "QuerySet",
     "ResolvedQuery",
     "SearchResult",
+    "SweepParam",
+    "SweepPoint",
+    "SweepResult",
     "TransformInfo",
     "VectorMismatchError",
     "VectorSource",
     "assignments",
     "centroids",
     "compute_projection",
+    "default_values",
     "explain_query",
     "fit_pca",
     "from_arrays",
+    "given_queries",
+    "ground_truth_ids",
     "imbalance_factor",
     "index_fingerprint",
     "list_members",
@@ -116,6 +134,7 @@ __all__ = [
     "recall_at_k",
     "reconstruct_all",
     "resolve_query",
+    "sample_queries",
     "stratified_sample",
     "trace_ivf",
 ]
