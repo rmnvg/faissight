@@ -112,3 +112,32 @@ def test_list_members_out_of_range(synthetic) -> None:
 def test_not_ivf(synthetic, fn) -> None:
     with pytest.raises(ivf.NotAnIVFIndexError):
         fn(load_index(synthetic["hnsw_flat"]))
+
+
+def _ivf_with_ids(wrap: bool):
+    x = np.random.default_rng(1).standard_normal((600, 8)).astype(np.float32)
+    ids = np.arange(600, dtype=np.int64) * 13 + 500
+    base = faiss.IndexIVFFlat(faiss.IndexFlatL2(8), 8, 8)
+    base.train(x)
+    index = faiss.IndexIDMap2(base) if wrap else base
+    index.add_with_ids(x, ids)
+    return index, x, ids
+
+
+@pytest.mark.parametrize("wrap", [True, False], ids=["idmap2_over_ivf", "ivf_add_with_ids"])
+def test_user_facing_ids(wrap) -> None:
+    index, x, ids = _ivf_with_ids(wrap)
+    li = load_index(index)
+    assert li.has_id_map == wrap
+
+    members = np.concatenate([ivf.list_members(li, i) for i in range(8)])
+    np.testing.assert_array_equal(np.sort(members), ids)
+
+    a = ivf.assignments(li)
+    np.testing.assert_array_equal(a.ids, ids)
+    _, nearest = li.ivf.quantizer.search(x, 1)
+    np.testing.assert_array_equal(a.lookup(ids), nearest[:, 0])
+
+    # Search results come back as user ids and must resolve to their list.
+    _, found = index.search(x[:5], 1)
+    assert (a.lookup(found[:, 0]) >= 0).all()
