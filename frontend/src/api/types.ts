@@ -209,3 +209,78 @@ export interface SweepRequest {
   k: number
   n_queries: number
 }
+
+export interface HnswLevelStats {
+  level: number
+  n_nodes: number
+  max_links: number
+  degree_mean: number
+  degree_min: number
+  degree_max: number
+  degree_hist: number[]
+}
+
+export interface HnswStats {
+  entry_point: number
+  max_level: number
+  m: number
+  ef_search: number
+  ef_construction: number
+  levels: HnswLevelStats[]
+}
+
+export interface HnswGraph {
+  level: number
+  n_level_nodes: number
+  sampled: boolean
+  ids: number[]
+  x: number[]
+  y: number[]
+  top_levels: number[]
+  edges_src: number[]
+  edges_dst: number[]
+}
+
+export interface HnswVisit {
+  node: number
+  distance: number
+  accepted: boolean
+}
+
+export interface HnswStep {
+  expanded: number
+  expanded_distance: number
+  visits: HnswVisit[]
+}
+
+export interface HnswLevelTrace {
+  level: number
+  entry: number
+  steps: HnswStep[]
+}
+
+export type HnswOutcome = 'FOUND' | 'VISITED_NOT_KEPT' | 'NOT_REACHED'
+
+export interface HnswTrace {
+  metric: Metric
+  higher_is_closer: boolean
+  ef_search: number
+  k: number
+  entry_point: number
+  max_level: number
+  levels: HnswLevelTrace[]
+  results: ResultRow[]
+  faiss_ids: number[]
+  overlap_with_faiss: number
+  truth: {
+    rank: number
+    id: number
+    distance: number
+    outcome: HnswOutcome
+    top_level: number
+    snippet: Snippet | null
+  }[] | null
+  recall: number | null
+  nodes: { ids: number[]; x: number[]; y: number[]; top_levels: number[] }
+  query_xy: number[] | null
+}

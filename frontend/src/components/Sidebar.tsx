@@ -37,6 +37,12 @@ export function Sidebar({
     { view: 'map', label: 'Cluster map', hint: 'Projected vectors', enabled: supported },
     { view: 'query', label: 'Query explorer', hint: 'Why did it miss?', enabled: supported },
     {
+      view: 'hnsw',
+      label: 'HNSW graph',
+      hint: 'Layers and search trace',
+      enabled: supported && (info?.kind === 'HNSW_FLAT' || info?.kind === 'HNSW_OTHER'),
+    },
+    {
       view: 'tuner',
       label: 'Tuner',
       hint: 'Recall vs latency',

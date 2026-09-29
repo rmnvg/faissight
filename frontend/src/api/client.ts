@@ -1,6 +1,9 @@
 import type {
   ApiErrorBody,
   Dims,
+  HnswGraph,
+  HnswStats,
+  HnswTrace,
   Info,
   IvfTrace,
   ListMembers,
@@ -85,4 +88,10 @@ export const api = {
   /** Starts (or reuses) a sweep; the job may still be running (HTTP 202). */
   startSweep: (req: SweepRequest) => post<SweepJob>('sweep', req),
   sweep: (jobId: string) => get<SweepJob>(`sweep/${encodeURIComponent(jobId)}`),
+  hnswStats: () => get<HnswStats>('hnsw/stats'),
+  hnswGraph: (level: number, limit: number, around: number | null) =>
+    get<HnswGraph>(
+      `hnsw/graph?level=${level}&limit=${limit}${around === null ? '' : `&around=${around}`}`,
+    ),
+  traceHnsw: (req: SearchRequest) => post<HnswTrace>('trace/hnsw', req),
 }

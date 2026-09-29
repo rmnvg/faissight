@@ -272,12 +272,32 @@ export default function QueryExplorer({
             {isIvf && result.trace ? (
               <ProbeChart trace={result.trace} />
             ) : (
-              <Card title="Search parameters">
-                <p className="text-sm text-ink-2">
-                  {isHnsw
-                    ? 'HNSW search trace arrives in a later version. Raise efSearch to trade speed for recall.'
-                    : 'Flat indexes search exhaustively, so every true neighbour is found.'}
-                </p>
+              <Card title={isHnsw ? 'How HNSW found these' : 'Search parameters'}>
+                {isHnsw ? (
+                  <div className="flex flex-col items-start gap-3 text-sm text-ink-2">
+                    <p>
+                      Replay this search step by step: the greedy descent through the upper layers,
+                      then the candidate expansion on level 0, and which true neighbours were never
+                      reached. Raising efSearch widens the search.
+                    </p>
+                    {result.request.query.id !== undefined ? (
+                      <button
+                        onClick={() =>
+                          navigate('hnsw', { id: result.request.query.id ?? null, ef: result.request.efSearch ?? null })
+                        }
+                        className="rounded-lg bg-series-1 px-3 py-1.5 font-medium text-white hover:opacity-90"
+                      >
+                        Open the search trace →
+                      </button>
+                    ) : (
+                      <p className="text-xs text-muted">The trace view takes a stored id as the query.</p>
+                    )}
+                  </div>
+                ) : (
+                  <p className="text-sm text-ink-2">
+                    Flat indexes search exhaustively, so every true neighbour is found.
+                  </p>
+                )}
               </Card>
             )}
           </div>
