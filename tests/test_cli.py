@@ -1,3 +1,4 @@
+import errno
 import json
 import os
 import socket
@@ -192,6 +193,41 @@ def test_serve_port_in_use(synthetic, fake_uvicorn) -> None:
         result = runner.invoke(app, ["serve", str(synthetic["flat_l2"]), "--port", str(port)])
     assert result.exit_code == 1
     assert "already in use" in result.output
+
+
+@pytest.mark.parametrize(
+    ("code", "port", "message", "hint"),
+    [
+        (errno.EACCES, 80, "Not allowed to listen on 127.0.0.1:80", "administrator rights"),
+        (errno.EPERM, 8914, "Not allowed to listen on 127.0.0.1:8914", "firewall or sandbox"),
+        (errno.EADDRNOTAVAIL, 8914, "127.0.0.1 is not an address of this machine", "0.0.0.0"),
+        (errno.ENOBUFS, 8914, "Cannot listen on 127.0.0.1:8914", "another --port"),
+    ],
+)
+def test_serve_reports_bind_errors_accurately(
+    synthetic, fake_uvicorn, monkeypatch, code, port, message, hint
+) -> None:
+    import faissight.cli as cli_mod
+
+    class RefusingSocket(socket.socket):
+        def bind(self, address) -> None:
+            raise OSError(code, os.strerror(code))
+
+    monkeypatch.setattr(cli_mod.socket, "socket", RefusingSocket)
+    result = runner.invoke(app, ["serve", str(synthetic["flat_l2"]), "--port", str(port)])
+    assert result.exit_code == 1
+    output = " ".join(result.output.split())  # Rich wraps long lines
+    assert message in output
+    assert hint in output
+    assert "already in use" not in output
+
+
+def test_serve_unresolvable_host(synthetic, fake_uvicorn) -> None:
+    result = runner.invoke(
+        app, ["serve", str(synthetic["flat_l2"]), "--host", "no-such-host.invalid"]
+    )
+    assert result.exit_code == 1
+    assert "Cannot resolve host 'no-such-host.invalid'" in result.output
 
 
 def test_serve_real_subprocess(synthetic, tmp_path) -> None:
