@@ -215,13 +215,17 @@ def projection(
     kind: Literal["points", "centroids"] = "points",
     method: Literal["pca", "umap"] = "pca",
     dims: Annotated[int, Query(ge=2, le=3)] = 2,
+    retry: Annotated[bool, Query(description="Restart a failed projection.")] = False,
 ) -> S.ProjectionResponse | JSONResponse:
     if kind == "centroids" and not session.li.kind.is_ivf:
         raise ApiError(400, "NOT_IVF", "Only IVF indexes have centroids.")
-    job = session.projection_job(method, dims)
-    if job.status is JobStatus.FAILED:
+    job = session.projection_job(method, dims, retry=retry)
+    if job.status in (JobStatus.FAILED, JobStatus.CANCELLED):
         raise ApiError(
-            500, "PROJECTION_FAILED", f"Projection failed: {job.error}", "See the server log."
+            500,
+            "PROJECTION_FAILED",
+            f"Projection failed: {job.error}",
+            "See the server log, then retry with retry=true.",
         )
     if not job.is_done:
         body = S.JobStatusResponse(**job.as_dict())
@@ -666,14 +670,22 @@ def _r(values: npt.NDArray[np.float32] | npt.NDArray[np.float64], digits: int = 
     response_model=S.PqErrorResponse,
     responses={202: {"model": S.JobStatusResponse}},
 )
-def pq_error(session: SupportedDep) -> S.PqErrorResponse | JSONResponse:
+def pq_error(
+    session: SupportedDep,
+    retry: Annotated[bool, Query(description="Restart a failed analysis.")] = False,
+) -> S.PqErrorResponse | JSONResponse:
     """Reconstruction error of the stored vectors (needs raw vectors)."""
     try:
-        job = session.pq_job()
+        job = session.pq_job(retry=retry)
     except PQ.RawVectorsRequiredError as e:
         return S.PqErrorResponse(available=False, reason=str(e), hint=e.hint)
-    if job.status is JobStatus.FAILED:
-        raise ApiError(500, "PQ_FAILED", f"Quantization analysis failed: {job.error}")
+    if job.status in (JobStatus.FAILED, JobStatus.CANCELLED):
+        raise ApiError(
+            500,
+            "PQ_FAILED",
+            f"Quantization analysis failed: {job.error}",
+            "See the server log, then retry with retry=true.",
+        )
     if not job.is_done:
         return JSONResponse(
             status_code=202, content=S.JobStatusResponse(**job.as_dict()).model_dump()

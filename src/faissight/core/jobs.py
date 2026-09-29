@@ -121,14 +121,20 @@ class JobRunner:
                 self._jobs.move_to_end(key)
             return job
 
-    def get_or_start(self, key: Hashable, fn: Callable[[ProgressFn], T]) -> Job[T]:
-        """Reuse running/successful work, or queue a new attempt within capacity limits."""
+    def get_or_start(
+        self, key: Hashable, fn: Callable[[ProgressFn], T], *, retry: bool = False
+    ) -> Job[T]:
+        """Reuse retained work, or queue a new attempt within capacity limits.
+
+        A failed or cancelled job is returned as is, so status polling reports the failure
+        instead of silently restarting it; pass ``retry=True`` to replace it with a new attempt.
+        """
         with self._lock:
             if self._closed:
                 raise JobCapacityError("This session has stopped.")
             self._prune()
             job = self._jobs.get(key)
-            if job is not None and job.status in (JobStatus.RUNNING, JobStatus.DONE):
+            if job is not None and (not retry or job.status in (JobStatus.RUNNING, JobStatus.DONE)):
                 self._jobs.move_to_end(key)
                 return job
             if self._active >= self._max_workers and len(self._pending) >= self._max_pending:
@@ -167,9 +173,9 @@ class JobRunner:
         for key in keys:
             self.cancel(key)
 
-    def run_sync(self, key: Hashable, fn: Callable[[ProgressFn], T]) -> T:
+    def run_sync(self, key: Hashable, fn: Callable[[ProgressFn], T], *, retry: bool = False) -> T:
         """Start/join a job and wait for its result; re-raise failures and cancellation."""
-        job = self.get_or_start(key, fn)
+        job = self.get_or_start(key, fn, retry=retry)
         job.wait()
         if job.error is not None:
             raise job.error

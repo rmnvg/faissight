@@ -16,7 +16,7 @@ import {
 } from 'recharts'
 import { api } from '../api/client'
 import type { Info, PqError } from '../api/types'
-import { Banner, Card, EmptyState, Progress, Segmented, SnippetText, Spinner, StatTile } from '../components/ui'
+import { Banner, Card, EmptyState, Progress, RetryButton, Segmented, SnippetText, Spinner, StatTile } from '../components/ui'
 import { fmtNum } from '../lib/format'
 import { downloadCSV, downloadJSON } from '../lib/exportData'
 import { navigate } from '../lib/route'
@@ -46,7 +46,17 @@ export default function Quantization({ info }: { info: Info }) {
       </header>
 
       {q.isPending && <Spinner label="Loading…" />}
-      {q.isError && <Banner tone="error">{q.error.message}</Banner>}
+      {q.isError && (
+        <div className="flex flex-col items-start gap-1">
+          <Banner tone="error">{q.error.message}</Banner>
+          <RetryButton
+            onClick={async () => {
+              await api.pqError(undefined, true).catch(() => {})
+              await q.refetch()
+            }}
+          />
+        </div>
+      )}
       {running && (
         <Card>
           <div className="flex justify-center py-6">

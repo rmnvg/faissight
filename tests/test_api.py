@@ -147,6 +147,30 @@ def test_projection_3d(ivf_client) -> None:
     assert len(body["z"]) == N
 
 
+def test_failed_projection_stays_failed_until_retried(synthetic, monkeypatch) -> None:
+    import faissight.session as session_mod
+
+    real = session_mod.compute_projection
+    calls = []
+
+    def flaky(*args, **kwargs):
+        calls.append(1)
+        if len(calls) == 1:
+            raise RuntimeError("out of memory")
+        return real(*args, **kwargs)
+
+    monkeypatch.setattr(session_mod, "compute_projection", flaky)
+    client = _client(Session(synthetic["ivf_flat"], vectors=synthetic["vectors"], disk_cache=False))
+    r = _wait_projection(client)
+    _assert_error(r, 500, "PROJECTION_FAILED")
+    # Polling again reports the same failure instead of quietly restarting (202 running).
+    _assert_error(client.get("/api/projection"), 500, "PROJECTION_FAILED")
+    assert len(calls) == 1
+    assert _wait_projection(client, retry=True).status_code in (200, 202)
+    assert _wait_projection(client).status_code == 200
+    assert len(calls) == 2
+
+
 def test_projection_first_call_is_202(synthetic) -> None:
     client = _client(Session(synthetic["flat_l2"], vectors=synthetic["vectors"]))
     first = client.get("/api/projection")
