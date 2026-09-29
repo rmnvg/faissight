@@ -12,7 +12,8 @@ import numpy as np
 import numpy.typing as npt
 
 from faissight.core._faiss import import_faiss
-from faissight.core.types import LoadedIndex, Metric
+from faissight.core.ivf import Assignments
+from faissight.core.types import IndexKind, LoadedIndex, Metric
 from faissight.core.vectors import VectorSource
 
 IntArray = npt.NDArray[np.int64]
@@ -238,3 +239,166 @@ def _check_dim(v: npt.ArrayLike, d: int, what: str) -> FloatArray:
     if not np.isfinite(arr).all():
         raise QueryError(f"{what} contains NaN or infinite values.")
     return arr
+
+
+class MissReason(str, Enum):
+    """Why a true nearest neighbour did or didn't make the approximate top-k."""
+
+    FOUND = "FOUND"
+    CELL_NOT_PROBED = "CELL_NOT_PROBED"
+    """Its inverted list ranked beyond ``nprobe`` in the probe order."""
+    QUANTIZATION = "QUANTIZATION"
+    """Its list was probed, but PQ/SQ approximate distances pushed it out of the top-k."""
+    TRANSFORM = "TRANSFORM"
+    """Its list was probed, but a dimension-reducing PreTransform (e.g. PCA) changed the
+    ranking: the index compares vectors in the reduced space."""
+    RANKED_OUT = "RANKED_OUT"
+    """Its list was probed, codes are exact and no transform loses information, yet it
+    missed the top-k: ties, or ground truth on vectors that differ from what is stored."""
+
+
+@dataclass(frozen=True)
+class NeighbourTrace:
+    """One exact nearest neighbour and what happened to it."""
+
+    id: int
+    truth_rank: int
+    distance: float
+    """Exact distance (or similarity, for IP) to the query."""
+    list_no: int
+    probe_rank: int
+    """Position of its list in the probe order; it is probed iff ``probe_rank < nprobe``."""
+    reason: MissReason
+    found_rank: int | None
+    """Its rank in the approximate results, if found."""
+
+
+@dataclass(frozen=True)
+class IvfTrace:
+    """How an IVF search visited cells, and where the true neighbours were."""
+
+    nprobe: int
+    probe_order: IntArray
+    """All list numbers, closest centroid first."""
+    centroid_distances: FloatArray
+    """Query-to-centroid distance (similarity for IP), aligned with ``probe_order``."""
+    neighbours: list[NeighbourTrace]
+    min_nprobe_for_all: int
+    """Smallest nprobe whose probed lists contain every true neighbour."""
+    result_list_nos: IntArray
+    """List number of each approximate result (``-1`` for empty slots)."""
+
+    @property
+    def probed_lists(self) -> IntArray:
+        return self.probe_order[: self.nprobe]
+
+    def reason_counts(self) -> dict[MissReason, int]:
+        counts = dict.fromkeys(MissReason, 0)
+        for n in self.neighbours:
+            counts[n.reason] += 1
+        return counts
+
+
+def trace_ivf(
+    li: LoadedIndex,
+    query: npt.ArrayLike,
+    result: SearchResult,
+    truth: SearchResult,
+    assignments: Assignments,
+) -> IvfTrace:
+    """Explain an IVF search: the full probe order and the fate of each true neighbour.
+
+    ``query`` is the input-space vector passed to :func:`search`; it goes through any
+    PreTransform before the coarse quantizer, exactly as FAISS does.
+    """
+    if li.ivf is None:
+        raise ValueError("IVF trace needs an IVF index.")
+    nprobe = int(result.params.get("nprobe", li.ivf.nprobe))
+    q_core = li.to_core_space(_as_query(query, li.d))
+    nlist = int(li.ivf.nlist)
+    centroid_dist, order = li.ivf.quantizer.search(q_core, nlist)
+    order = order[0].astype(np.int64)
+    probe_rank = np.full(nlist, nlist, dtype=np.int64)
+    probe_rank[order[order >= 0]] = np.arange(nlist)[order >= 0]
+
+    found_rank = {int(i): r for r, i in enumerate(result.ids) if i >= 0}
+    # When both apply (e.g. PCA + PQ) we report QUANTIZATION; separating them would need
+    # exact distances in the transformed space.
+    if li.kind in (IndexKind.IVF_PQ, IndexKind.IVF_SQ):
+        probed_miss = MissReason.QUANTIZATION
+    elif any(t.d_out < t.d_in for t in li.transforms):
+        probed_miss = MissReason.TRANSFORM
+    else:
+        probed_miss = MissReason.RANKED_OUT
+    truth_ids = truth.ids
+    truth_lists = assignments.lookup(truth_ids)
+    neighbours: list[NeighbourTrace] = []
+    for rank, (nid, dist, list_no) in enumerate(
+        zip(truth_ids, truth.distances, truth_lists, strict=True)
+    ):
+        if nid < 0:
+            continue
+        pr = int(probe_rank[list_no]) if list_no >= 0 else nlist
+        if int(nid) in found_rank:
+            reason = MissReason.FOUND
+        elif pr >= nprobe:
+            reason = MissReason.CELL_NOT_PROBED
+        else:
+            reason = probed_miss
+        neighbours.append(
+            NeighbourTrace(
+                int(nid), rank, float(dist), int(list_no), pr, reason, found_rank.get(int(nid))
+            )
+        )
+
+    return IvfTrace(
+        nprobe=nprobe,
+        probe_order=order,
+        centroid_distances=centroid_dist[0].astype(np.float32),
+        neighbours=neighbours,
+        min_nprobe_for_all=min(nlist, max((n.probe_rank for n in neighbours), default=0) + 1),
+        result_list_nos=assignments.lookup(result.ids),
+    )
+
+
+@dataclass(frozen=True)
+class QueryReport:
+    """Everything the query explorer shows for one query."""
+
+    query: ResolvedQuery
+    result: SearchResult
+    truth: SearchResult | None = None
+    recall: float | None = None
+    truth_reconstructed: bool = False
+    """Ground truth was computed on reconstructed vectors, so PQ/SQ error isn't measured."""
+    ivf_trace: IvfTrace | None = None
+
+
+def explain_query(
+    li: LoadedIndex,
+    query: ResolvedQuery,
+    k: int,
+    *,
+    nprobe: int | None = None,
+    ef_search: int | None = None,
+    ground_truth: GroundTruth | None = None,
+    assignments: Assignments | None = None,
+) -> QueryReport:
+    """Search, compare with exact ground truth (if given) and trace IVF probing (if IVF)."""
+    result = search(
+        li, query.vector, k, nprobe=nprobe, ef_search=ef_search, exclude_id=query.exclude_id
+    )
+    if ground_truth is None:
+        return QueryReport(query, result)
+    truth = ground_truth.search(query.vector, k, exclude_id=query.exclude_id)
+    trace = None
+    if li.kind.is_ivf and assignments is not None:
+        trace = trace_ivf(li, query.vector, result, truth, assignments)
+    return QueryReport(
+        query=query,
+        result=result,
+        truth=truth,
+        recall=recall_at_k(result.ids, truth.ids),
+        truth_reconstructed=ground_truth.reconstructed,
+        ivf_trace=trace,
+    )
