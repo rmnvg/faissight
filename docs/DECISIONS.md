@@ -29,3 +29,7 @@ One line per non-obvious technical decision.
 - UMAP queries are placed by inverse-distance-weighted kNN interpolation over the projected sample, not `umap.transform` (4.7 s for 10 queries on 20k points). Centroids use `.transform` once at fit time and are cached.
 - Projection cache key = index sha1 (dir) + method + dims + max_points + seed + sha1 of the sampled vectors, so raw vs reconstructed vectors never collide. Stored as `.npz` (no pickle), written atomically. `FAISSIGHT_CACHE_DIR` / `XDG_CACHE_HOME` override the location.
 - UMAP tests are marked `slow` (cold numba import ~35 s) and excluded by default; CI runs them with `-m "slow or not slow"`.
+- `Session` lives at package level (not in `core`) but has no web imports; the server and `launch()` both wrap it.
+- Session caches are computed on first use under an `RLock`. Building an IVF direct map during reconstruction is safe alongside searches: IVF search never reads the direct map, and building it only reads the inverted lists.
+- A `--embedder` model name loads in a background job at startup (importing sentence-transformers takes ~15 s); the first text query waits for it. Query embeddings are normalised iff the raw vectors are unit-norm (or, without raw vectors, iff the metric is IP), unless overridden.
+- The session resolves its cache directory at construction, not in the background thread, so env changes can't redirect a running job (tests caught stray writes to ~/.cache).

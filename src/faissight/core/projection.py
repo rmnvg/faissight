@@ -255,7 +255,7 @@ def _fit_umap(x: FloatArray, dims: int, seed: int) -> Any:
 
 
 def place_points(
-    proj: Projection, x_core: npt.ArrayLike, reference_core: npt.ArrayLike, k: int = 15
+    proj: Projection, x_core: npt.ArrayLike, reference_core: npt.ArrayLike | None, k: int = 15
 ) -> FloatArray:
     """Coordinates for new vectors (e.g. queries) in core space.
 
@@ -267,6 +267,8 @@ def place_points(
     x = np.atleast_2d(np.asarray(x_core, dtype=np.float32))
     if proj.pca is not None:
         return proj.pca.transform(x)
+    if reference_core is None:
+        raise ValueError("UMAP placement needs the core-space vectors of proj.ids.")
     faiss = import_faiss()
     ref = np.ascontiguousarray(reference_core, dtype=np.float32)
     k = min(k, len(ref))

@@ -20,6 +20,7 @@ FAISS is imported lazily, so importing this package works without FAISS installe
 """
 
 from faissight.core._faiss import FaissNotInstalledError
+from faissight.core.embed import Embedder, EmbedderUnavailableError
 from faissight.core.ivf import (
     Assignments,
     ListStats,
@@ -33,6 +34,7 @@ from faissight.core.ivf import (
 )
 from faissight.core.jobs import Job, JobRunner, JobStatus
 from faissight.core.loader import IndexLoadError, load_index
+from faissight.core.metadata import Metadata, MetadataError, load_metadata
 from faissight.core.projection import (
     PcaModel,
     Projection,
@@ -46,7 +48,6 @@ from faissight.core.projection import (
     stratified_sample,
 )
 from faissight.core.search import (
-    Embedder,
     GroundTruth,
     IvfTrace,
     MissReason,
@@ -67,6 +68,7 @@ from faissight.core.vectors import VectorMismatchError, VectorSource, from_array
 __all__ = [
     "Assignments",
     "Embedder",
+    "EmbedderUnavailableError",
     "FaissNotInstalledError",
     "GroundTruth",
     "IndexKind",
@@ -78,6 +80,8 @@ __all__ = [
     "JobStatus",
     "ListStats",
     "LoadedIndex",
+    "Metadata",
+    "MetadataError",
     "Metric",
     "MissReason",
     "NeighbourTrace",
@@ -107,6 +111,7 @@ __all__ = [
     "list_sizes",
     "list_stats",
     "load_index",
+    "load_metadata",
     "place_points",
     "recall_at_k",
     "reconstruct_all",

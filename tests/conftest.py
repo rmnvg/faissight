@@ -46,3 +46,11 @@ def binary_index_path(tmp_path_factory: pytest.TempPathFactory) -> Path:
     path = tmp_path_factory.mktemp("binary") / "binary_flat.index"
     faiss.write_index_binary(faiss.IndexBinaryFlat(64), str(path))
     return path
+
+
+@pytest.fixture(autouse=True)
+def _isolated_cache(
+    tmp_path_factory: pytest.TempPathFactory, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Never write projection caches to the real ~/.cache during tests."""
+    monkeypatch.setenv("FAISSIGHT_CACHE_DIR", str(tmp_path_factory.mktemp("cache")))

@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import time
-from collections.abc import Callable
 from dataclasses import dataclass, field
 from enum import Enum
 from typing import Any
@@ -12,6 +11,7 @@ import numpy as np
 import numpy.typing as npt
 
 from faissight.core._faiss import import_faiss
+from faissight.core.embed import Embedder
 from faissight.core.ivf import Assignments
 from faissight.core.types import IndexKind, LoadedIndex, Metric
 from faissight.core.vectors import VectorSource
@@ -167,10 +167,6 @@ def recall_at_k(found: npt.ArrayLike, truth: npt.ArrayLike) -> float:
     if len(truth_ids) == 0:
         return 1.0
     return float(np.isin(truth_ids, np.asarray(found, dtype=np.int64)).mean())
-
-
-Embedder = Callable[[str], npt.ArrayLike]
-"""Turns query text into a vector of the index's input dimension."""
 
 
 class QueryError(ValueError):
