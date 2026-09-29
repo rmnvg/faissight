@@ -6,7 +6,6 @@ import type {
   HnswStats,
   HnswTrace,
   Info,
-  IvfTrace,
   ListMembers,
   ListSizes,
   MetadataRow,
@@ -85,7 +84,6 @@ export const api = {
   projection: (kind: 'points' | 'centroids', method: ProjectionMethod, dims: Dims) =>
     get<ProjectionOrStatus>(`projection?kind=${kind}&method=${method}&dims=${dims}`),
   search: (req: SearchRequest) => post<SearchResponse>('search', req),
-  traceIvf: (req: SearchRequest) => post<IvfTrace>('trace/ivf', req),
   metadata: (id: UserId) => get<MetadataRow>(`metadata/${id}`),
   /** Starts (or reuses) a sweep; the job may still be running (HTTP 202). */
   startSweep: (req: SweepRequest) => post<SweepJob>('sweep', req),

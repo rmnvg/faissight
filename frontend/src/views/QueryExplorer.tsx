@@ -70,11 +70,10 @@ export default function QueryExplorer({
 
   const run = useMutation({
     mutationFn: async (req: SearchRequest): Promise<RunResult> => {
-      const [search, trace] = await Promise.all([
-        api.search(req),
-        isIvf ? api.traceIvf({ ...req, compare: true }) : Promise.resolve(null),
-      ])
-      return { search, trace, request: req }
+      // One round trip: the probe trace rides on the search, and only when comparing,
+      // since explaining misses needs exact ground truth.
+      const search = await api.search({ ...req, trace: isIvf && req.compare })
+      return { search, trace: search.ivf_trace, request: req }
     },
   })
 
@@ -308,7 +307,7 @@ export default function QueryExplorer({
             {isIvf && result.trace ? (
               <ProbeChart trace={result.trace} />
             ) : (
-              <Card title={isHnsw ? 'How HNSW found these' : 'Search parameters'}>
+              <Card title={isHnsw ? 'How HNSW found these' : isIvf ? 'Probe order' : 'Search parameters'}>
                 {isHnsw ? (
                   <div className="flex flex-col items-start gap-3 text-sm text-ink-2">
                     <p>
@@ -329,6 +328,11 @@ export default function QueryExplorer({
                       <p className="text-xs text-muted">The trace view takes a stored id as the query.</p>
                     )}
                   </div>
+                ) : isIvf ? (
+                  <p className="text-sm text-ink-2">
+                    Enable “compare with exact” to see the probe order and which cells held the
+                    true neighbours.
+                  </p>
                 ) : (
                   <p className="text-sm text-ink-2">
                     Flat indexes search exhaustively, so every true neighbour is found.

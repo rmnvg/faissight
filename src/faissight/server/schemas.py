@@ -175,8 +175,16 @@ class SearchRequest(BaseModel):
     nprobe: int | None = Field(None, ge=1)
     ef_search: int | None = Field(None, ge=1, alias="efSearch")
     compare: bool = True
+    trace: bool = False
+    """On an IVF index, also return the probe trace (saves a second /trace/ivf round trip)."""
     projection: ProjectionRef | None = None
     """If this projection is ready, the response includes the query's coordinates."""
+
+    @model_validator(mode="after")
+    def _trace_needs_compare(self) -> SearchRequest:
+        if self.trace and not self.compare:
+            raise ValueError("trace explains misses against exact ground truth; set compare.")
+        return self
 
 
 class ResultRow(BaseModel):
@@ -213,6 +221,8 @@ class SearchResponse(BaseModel):
     min_nprobe: int | None = None
     reason_counts: dict[str, int] | None = None
     query_coords: list[float] | None = None
+    ivf_trace: IvfTraceResponse | None = None
+    """Present when ``trace`` was requested on an IVF index."""
 
 
 class ProbeRow(BaseModel):

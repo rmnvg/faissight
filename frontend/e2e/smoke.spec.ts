@@ -23,6 +23,34 @@ test('query explorer: run a query and see results with miss explanations', async
   await expect(page.getByText('Probe order')).toBeVisible()
 })
 
+test('query explorer: one request per search, and no exact work when compare is off', async ({ page }) => {
+  const calls: string[] = []
+  page.on('request', (r) => {
+    if (r.url().includes('/api/search') || r.url().includes('/api/trace/')) calls.push(r.url())
+  })
+  await page.goto('/#/query')
+  await page.getByRole('radio', { name: 'Stored id' }).click()
+  await page.getByPlaceholder('e.g. 42').fill('7')
+  let searched = page.waitForResponse((r) => r.url().endsWith('/api/search'))
+  await page.getByRole('button', { name: 'Search', exact: true }).click()
+  let response = await searched
+  expect(response.request().postDataJSON()).toMatchObject({ compare: true, trace: true })
+  expect((await response.json()).ivf_trace).not.toBeNull()
+  await expect(page.getByText('Recall@10')).toBeVisible()
+  expect(calls).toHaveLength(1)
+
+  await page.getByLabel('Compare with exact').uncheck()
+  searched = page.waitForResponse((r) => r.url().endsWith('/api/search'))
+  await page.getByRole('button', { name: 'Search', exact: true }).click()
+  response = await searched
+  expect(response.request().postDataJSON()).toMatchObject({ compare: false, trace: false })
+  const body = await response.json()
+  expect(body.truth).toBeNull()
+  expect(body.ivf_trace).toBeNull()
+  await expect(page.getByText('Enable “compare with exact” to see the probe order')).toBeVisible()
+  expect(calls).toHaveLength(2)
+})
+
 test('tuner: sweep and get a recommendation', async ({ page }) => {
   await page.goto('/#/tuner')
   await page.getByRole('button', { name: 'Run sweep' }).click()

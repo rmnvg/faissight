@@ -122,6 +122,8 @@ export interface SearchRequest {
   nprobe?: number
   efSearch?: number
   compare: boolean
+  /** IVF only, needs compare: include the probe trace in the search response. */
+  trace?: boolean
   projection?: { method: ProjectionMethod; dims: Dims }
 }
 
@@ -159,6 +161,7 @@ export interface SearchResponse {
   min_nprobe: number | null
   reason_counts: Record<MissReason, number> | null
   query_coords: number[] | null
+  ivf_trace: IvfTrace | null
 }
 
 export interface ProbeRow {
