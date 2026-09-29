@@ -11,6 +11,7 @@ const ClusterMap = lazy(() => import('./views/ClusterMap'))
 const QueryExplorer = lazy(() => import('./views/QueryExplorer'))
 const Tuner = lazy(() => import('./views/Tuner'))
 const Hnsw = lazy(() => import('./views/Hnsw'))
+const Quantization = lazy(() => import('./views/Quantization'))
 
 export default function App() {
   const info = useInfo()
@@ -53,6 +54,7 @@ export default function App() {
             {view === 'map' && <ClusterMap info={info.data} params={route.params} mode={mode} />}
             {view === 'tuner' && <Tuner info={info.data} params={route.params} />}
             {view === 'hnsw' && <Hnsw info={info.data} params={route.params} mode={mode} />}
+            {view === 'quantization' && <Quantization info={info.data} />}
             {view === 'query' && (
               <QueryExplorer info={info.data} params={route.params} mode={mode} />
             )}

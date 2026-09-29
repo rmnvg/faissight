@@ -9,6 +9,7 @@ import type {
   ListMembers,
   ListSizes,
   MetadataRow,
+  PqErrorOrStatus,
   ProjectionMethod,
   ProjectionOrStatus,
   SearchRequest,
@@ -94,4 +95,6 @@ export const api = {
       `hnsw/graph?level=${level}&limit=${limit}${around === null ? '' : `&around=${around}`}`,
     ),
   traceHnsw: (req: SearchRequest) => post<HnswTrace>('trace/hnsw', req),
+  /** Resolves to a JobStatus (HTTP 202) while the analysis is still computing. */
+  pqError: () => get<PqErrorOrStatus>('pq/error'),
 }

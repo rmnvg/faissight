@@ -1,12 +1,12 @@
 import { useEffect, useState } from 'react'
 
-export type View = 'overview' | 'map' | 'query' | 'tuner' | 'hnsw'
+export type View = 'overview' | 'map' | 'query' | 'tuner' | 'hnsw' | 'quantization'
 export interface Route {
   view: View
   params: URLSearchParams
 }
 
-const VIEWS: View[] = ['overview', 'map', 'query', 'tuner', 'hnsw']
+const VIEWS: View[] = ['overview', 'map', 'query', 'tuner', 'hnsw', 'quantization']
 
 function parse(hash: string): Route {
   const [path, qs = ''] = hash.replace(/^#\/?/, '').split('?')

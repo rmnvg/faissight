@@ -371,6 +371,14 @@ function Headline({ result, isIvf }: { result: RunResult; isIvf: boolean }) {
             misses.map(([r, n]) => (
               <span key={r} className="inline-flex items-center gap-1 text-sm">
                 <ReasonBadge reason={r} /> <span className="tabular text-ink">×{n}</span>
+                {r === 'QUANTIZATION' && (
+                  <button
+                    onClick={() => navigate('quantization')}
+                    className="text-xs text-series-1 hover:underline"
+                  >
+                    why? →
+                  </button>
+                )}
               </span>
             ))
           )}
@@ -679,7 +687,18 @@ function TruthTable({ result, isIvf }: { result: SearchResponse; isIvf: boolean 
                 <td className="tabular py-1.5 pr-3 text-right text-ink">{fmtDist(t.distance)}</td>
                 {isIvf && <td className="tabular py-1.5 pr-3 text-right text-ink-2">{t.list_no ?? '—'}</td>}
                 {isIvf && <td className="tabular py-1.5 pr-3 text-right text-ink-2">{t.probe_rank ?? '—'}</td>}
-                <td className="py-1.5 pr-3"><ReasonBadge reason={t.reason} /></td>
+                <td className="py-1.5 pr-3">
+                  <ReasonBadge reason={t.reason} />
+                  {t.reason === 'QUANTIZATION' && (
+                    <button
+                      onClick={() => navigate('quantization')}
+                      className="ml-1.5 text-xs text-series-1 hover:underline"
+                      title="See how much the codes distort distances"
+                    >
+                      see quantization →
+                    </button>
+                  )}
+                </td>
                 <td className="tabular py-1.5 pr-3 text-right text-ink-2">{t.found_rank === null ? '—' : t.found_rank + 1}</td>
                 <td className="py-1.5 text-xs"><SnippetText snippet={t.snippet} /></td>
               </tr>

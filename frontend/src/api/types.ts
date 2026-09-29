@@ -284,3 +284,32 @@ export interface HnswTrace {
   nodes: { ids: number[]; x: number[]; y: number[]; top_levels: number[] }
   query_xy: number[] | null
 }
+
+export interface PqError {
+  available: boolean
+  reason: string | null
+  hint: string | null
+  kind: IndexKind | null
+  metric: Metric | null
+  n: number | null
+  code_size: number | null
+  raw_bytes: number | null
+  has_transform: boolean
+  mean: number | null
+  median: number | null
+  p95: number | null
+  max: number | null
+  relative_mean: number | null
+  histogram: { edges: number[]; counts: number[] } | null
+  per_list: { list_no: number; size: number; mean_error: number }[] | null
+  worst: { id: number; error: number; relative: number; list_no: number | null; snippet: Snippet | null }[] | null
+  distortion: {
+    true: number[]
+    approx: number[]
+    near: boolean[]
+    correlation: number
+    near_correlation: number
+  } | null
+}
+
+export type PqErrorOrStatus = PqError | JobStatus

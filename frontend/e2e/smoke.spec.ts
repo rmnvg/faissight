@@ -40,3 +40,12 @@ test('hnsw graph: trace a search and see the layers and outcomes', async ({ page
   await expect(truth.first()).toContainText(/Found|Not reached|ranked out/)
   await expect(page.getByText('Graph structure')).toBeVisible()
 })
+
+test('quantization: analysis loads with error, compression and distortion', async ({ page }) => {
+  await page.goto('/#/quantization')
+  await expect(page.getByText('Mean squared error')).toBeVisible({ timeout: 20_000 })
+  await expect(page.getByText('Distance fidelity (near pairs)')).toBeVisible()
+  await expect(page.getByText('True vs approximate distance')).toBeVisible()
+  const worst = page.locator('section', { hasText: 'Worst-reconstructed vectors' }).locator('tbody tr')
+  await expect(worst).toHaveCount(50)
+})

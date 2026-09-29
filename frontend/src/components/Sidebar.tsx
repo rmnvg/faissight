@@ -43,6 +43,15 @@ export function Sidebar({
       enabled: supported && (info?.kind === 'HNSW_FLAT' || info?.kind === 'HNSW_OTHER'),
     },
     {
+      view: 'quantization',
+      label: 'Quantization',
+      hint: 'Compression error',
+      enabled:
+        supported &&
+        (['IVF_PQ', 'IVF_SQ', 'HNSW_OTHER'].includes(info?.kind ?? '') ||
+          (info?.transforms.some((t) => t.d_out < t.d_in) ?? false)),
+    },
+    {
       view: 'tuner',
       label: 'Tuner',
       hint: 'Recall vs latency',
