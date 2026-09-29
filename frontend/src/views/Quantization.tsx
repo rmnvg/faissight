@@ -27,7 +27,7 @@ const sig = (v: number, p = 3) => String(Number(v.toPrecision(p)))
 export default function Quantization({ info }: { info: Info }) {
   const q = useQuery({
     queryKey: ['pq-error'],
-    queryFn: api.pqError,
+    queryFn: ({ signal }) => api.pqError(signal),
     staleTime: Infinity,
     retry: false,
     refetchInterval: (query) => (query.state.data && 'status' in query.state.data ? 500 : false),

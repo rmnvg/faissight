@@ -336,12 +336,16 @@ def search(req: S.SearchRequest, session: SupportedDep) -> S.SearchResponse:
         min_nprobe=trace.min_nprobe_for_all if trace else None,
         reason_counts={k.value: v for k, v in trace.reason_counts().items()} if trace else None,
         query_coords=query_coords,
+        ivf_trace=_ivf_trace_response(session, report) if req.trace and trace else None,
     )
 
 
 @router.post("/trace/ivf", response_model=S.IvfTraceResponse)
 def trace_ivf(req: S.SearchRequest, session: IvfDep) -> S.IvfTraceResponse:
-    report = _run_query(session, req, force_compare=True)
+    return _ivf_trace_response(session, _run_query(session, req, force_compare=True))
+
+
+def _ivf_trace_response(session: Session, report: QueryReport) -> S.IvfTraceResponse:
     trace = report.ivf_trace
     assert trace is not None
     sizes = session.list_stats().sizes

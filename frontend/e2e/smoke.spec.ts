@@ -23,6 +23,102 @@ test('query explorer: run a query and see results with miss explanations', async
   await expect(page.getByText('Probe order')).toBeVisible()
 })
 
+test('query explorer: one request per search, and no exact work when compare is off', async ({ page }) => {
+  const calls: string[] = []
+  page.on('request', (r) => {
+    if (r.url().includes('/api/search') || r.url().includes('/api/trace/')) calls.push(r.url())
+  })
+  await page.goto('/#/query')
+  await page.getByRole('radio', { name: 'Stored id' }).click()
+  await page.getByPlaceholder('e.g. 42').fill('7')
+  let searched = page.waitForResponse((r) => r.url().endsWith('/api/search'))
+  await page.getByRole('button', { name: 'Search', exact: true }).click()
+  let response = await searched
+  expect(response.request().postDataJSON()).toMatchObject({ compare: true, trace: true })
+  expect((await response.json()).ivf_trace).not.toBeNull()
+  await expect(page.getByText('Recall@10')).toBeVisible()
+  expect(calls).toHaveLength(1)
+
+  await page.getByLabel('Compare with exact').uncheck()
+  searched = page.waitForResponse((r) => r.url().endsWith('/api/search'))
+  await page.getByRole('button', { name: 'Search', exact: true }).click()
+  response = await searched
+  expect(response.request().postDataJSON()).toMatchObject({ compare: false, trace: false })
+  const body = await response.json()
+  expect(body.truth).toBeNull()
+  expect(body.ivf_trace).toBeNull()
+  await expect(page.getByText('Enable “compare with exact” to see the probe order')).toBeVisible()
+  expect(calls).toHaveLength(2)
+})
+
+test('a view that fails to load shows a recoverable error, not a blank page', async ({ page }) => {
+  await page.goto('/')
+  await expect(page.getByRole('heading', { name: 'Overview' })).toBeVisible()
+  await page.route(/assets\/Tuner-[^/]+\.js$/, (route) => route.abort())
+  await page.getByRole('button', { name: /Tuner/ }).click()
+  await expect(page.getByText('This view could not be loaded from the faissight server')).toBeVisible()
+  await expect(page.getByRole('button', { name: 'Reload page' })).toBeVisible()
+  // The rest of the app still works.
+  await page.getByRole('button', { name: /Overview/ }).click()
+  await expect(page.getByRole('heading', { name: 'Overview' })).toBeVisible()
+})
+
+test('a dropped server connection surfaces as an error and the explorer recovers', async ({ page }) => {
+  await page.goto('/#/query')
+  await page.getByRole('radio', { name: 'Stored id' }).click()
+  await page.getByPlaceholder('e.g. 42').fill('7')
+  await page.route('**/api/search', (route) => route.abort('connectionreset'))
+  await page.getByRole('button', { name: 'Search', exact: true }).click()
+  await expect(page.getByRole('alert')).toContainText('NETWORK_ERROR')
+  await expect(page.getByRole('button', { name: 'Search', exact: true })).toBeEnabled()
+
+  await page.unroute('**/api/search')
+  await page.getByPlaceholder('e.g. 42').fill('8')
+  await page.getByRole('button', { name: 'Search', exact: true }).click()
+  await expect(page.getByText('Recall@10')).toBeVisible()
+})
+
+test('a newer search cancels the one still in flight', async ({ page }) => {
+  await page.goto('/#/query')
+  await page.getByRole('radio', { name: 'Stored id' }).click()
+  // Hold the first search so the second overtakes it.
+  let held = true
+  await page.route('**/api/search', async (route) => {
+    if (held) {
+      held = false
+      await new Promise((r) => setTimeout(r, 1500))
+    }
+    await route.continue().catch(() => {})  // the browser may have cancelled it meanwhile
+  })
+  // Record which searches the client itself aborted. In-page code is a string because
+  // e2e/ is type-checked without DOM types.
+  await page.addInitScript(`
+    window.aborted = []
+    const fetch = window.fetch
+    window.fetch = (input, init) => {
+      if (String(input).endsWith('api/search'))
+        init?.signal?.addEventListener('abort', () => window.aborted.push(JSON.parse(init.body).query.id))
+      return fetch(input, init)
+    }
+  `)
+  await page.reload()
+  await page.getByRole('radio', { name: 'Stored id' }).click()
+  await page.getByPlaceholder('e.g. 42').fill('7')
+  const first = page.waitForRequest((r) => r.url().endsWith('/api/search'))
+  await page.getByRole('button', { name: 'Search', exact: true }).click()
+  await first
+  const second = page.waitForResponse(
+    (r) => r.url().endsWith('/api/search') && r.request().postDataJSON().query.id === 8,
+  )
+  await page.evaluate(`location.hash = '#/query?id=8'`)
+  const expected = (await (await second).json()).results[0]
+  await expect(page.getByText('Recall@10')).toBeVisible()
+  expect(await page.evaluate('window.aborted')).toEqual([7])
+  const firstResult = page.locator('section', { hasText: 'Approximate results' }).locator('tbody tr').first()
+  await expect(firstResult.getByRole('button', { name: String(expected.id), exact: true })).toBeVisible()
+  await expect(page.getByRole('alert')).toHaveCount(0)
+})
+
 test('tuner: sweep and get a recommendation', async ({ page }) => {
   await page.goto('/#/tuner')
   await page.getByRole('button', { name: 'Run sweep' }).click()

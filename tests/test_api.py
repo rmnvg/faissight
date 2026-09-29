@@ -277,6 +277,27 @@ def test_trace_ivf(ivf_client) -> None:
     assert body["min_nprobe"] == 1 + max(n["probe_rank"] for n in body["neighbours"])
 
 
+def test_search_with_trace_matches_trace_endpoint(ivf_client) -> None:
+    req = {"query": {"id": 5}, "nprobe": 2}
+    body = ivf_client.post("/api/search", json={**req, "trace": True}).json()
+    trace = ivf_client.post("/api/trace/ivf", json=req).json()
+    assert body["ivf_trace"] == trace
+    assert body["ivf_trace"]["min_nprobe"] == body["min_nprobe"]
+
+
+def test_search_trace_is_opt_in(ivf_client, hnsw_client) -> None:
+    assert ivf_client.post("/api/search", json={"query": {"id": 5}}).json()["ivf_trace"] is None
+    body = hnsw_client.post("/api/search", json={"query": {"id": 5}, "trace": True}).json()
+    assert body["ivf_trace"] is None
+
+
+def test_search_trace_needs_compare(ivf_client) -> None:
+    resp = ivf_client.post(
+        "/api/search", json={"query": {"id": 5}, "trace": True, "compare": False}
+    )
+    _assert_error(resp, 422, "VALIDATION_ERROR")
+
+
 def test_trace_ivf_needs_ivf(hnsw_client) -> None:
     _assert_error(hnsw_client.post("/api/trace/ivf", json={"query": {"id": 1}}), 400, "NOT_IVF")
 
