@@ -2,10 +2,12 @@
 
 from __future__ import annotations
 
+import hashlib
+import platform
 import threading
 import time
 from collections.abc import Callable, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from enum import Enum
 from typing import Literal
 
@@ -93,6 +95,7 @@ class QuerySet:
     vectors: FloatArray
     exclude_ids: IntArray | None
     origin: Literal["given", "sampled"]
+    seed: int | None = None
 
     def __len__(self) -> int:
         return len(self.vectors)
@@ -102,16 +105,22 @@ def given_queries(li: LoadedIndex, vectors: npt.ArrayLike) -> QuerySet:
     q = np.ascontiguousarray(vectors, dtype=np.float32)
     if q.ndim != 2 or q.shape[1] != li.d or len(q) == 0:
         raise ValueError(f"Queries must have shape (n, {li.d}) with n >= 1, got {q.shape}.")
+    if not np.isfinite(q).all():
+        raise ValueError("Queries contain NaN or infinite values.")
     return QuerySet(q, None, "given")
 
 
 def sample_queries(source: VectorSource, n: int = DEFAULT_N_QUERIES, seed: int = 0) -> QuerySet:
     """``n`` stored vectors as queries (seeded); each excludes its own id from results."""
+    if len(source) == 0:
+        raise ValueError("Cannot sample queries from an empty index.")
+    if seed < 0:
+        raise ValueError("seed must be non-negative.")
     if n < 1:
         raise ValueError(f"n_queries must be >= 1, got {n}.")
     rng = np.random.default_rng(seed)
     rows = np.sort(rng.choice(len(source), size=min(n, len(source)), replace=False))
-    return QuerySet(source.vectors[rows], source.ids[rows].astype(np.int64), "sampled")
+    return QuerySet(source.vectors[rows], source.ids[rows].astype(np.int64), "sampled", seed)
 
 
 # --- sweep -------------------------------------------------------------------------------
@@ -135,6 +144,11 @@ class SweepResult:
     query_origin: Literal["given", "sampled"]
     truth_reconstructed: bool
     points: list[SweepPoint]
+    repeats: int = 3
+    seed: int = 0
+    query_sha256: str = ""
+    environment: dict[str, str | int] = field(default_factory=dict)
+    query_seed: int | None = None
 
     def recommend(self, target_recall: float) -> SweepPoint | None:
         """Smallest parameter value whose mean recall meets ``target_recall``.
@@ -174,6 +188,8 @@ def sweep(
     k: int = 10,
     truth_reconstructed: bool = False,
     progress: ProgressFn | None = None,
+    repeats: int = 3,
+    seed: int = 0,
 ) -> SweepResult:
     """Measure recall@k and per-query latency at each parameter value.
 
@@ -182,6 +198,10 @@ def sweep(
     """
     faiss = import_faiss()
     param, vals = check_values(li, param, values)
+    if repeats < 1 or seed < 0:
+        raise ValueError("repeats must be >= 1 and seed must be non-negative.")
+    if len(queries) == 0:
+        raise ValueError("Give at least one query.")
     if k < 1:
         raise ValueError(f"k must be >= 1, got {k}.")
     if truth.shape != (len(queries), k):
@@ -203,22 +223,29 @@ def sweep(
         prev_threads = faiss.omp_get_max_threads()
         faiss.omp_set_num_threads(1)
         try:
-            report(0.0, "Warming up")
-            li.index.search(queries.vectors, k_search, params=all_params[0])
             for step, (v, sp) in enumerate(zip(vals, all_params, strict=True)):
-                report(step / len(vals), f"{param.value}={v}")
-                latencies = np.empty(n, dtype=np.float64)
+                report(step / len(vals), f"{param.value}={v}: warming up")
+                li.index.search(queries.vectors, k_search, params=sp)
+                latencies = np.empty(n * repeats, dtype=np.float64)
                 recalls = np.empty(n, dtype=np.float64)
-                for i in range(n):
-                    q = queries.vectors[i : i + 1]
-                    t0 = time.perf_counter()
-                    _, found = li.index.search(q, k_search, params=sp)
-                    latencies[i] = time.perf_counter() - t0
-                    row = found[0]
-                    if excl is not None:
-                        row = row[row != excl[i]]
-                    true_row = truth[i][truth[i] >= 0]
-                    recalls[i] = np.isin(true_row, row[:k]).mean() if len(true_row) else 1.0
+                rng = np.random.default_rng(seed)
+                for repeat in range(repeats):
+                    for j, i in enumerate(rng.permutation(n)):
+                        if j % 32 == 0:
+                            report(
+                                (step + (repeat + j / n) / repeats) / len(vals),
+                                f"{param.value}={v}: repeat {repeat + 1}/{repeats}",
+                            )
+                        q = queries.vectors[i : i + 1]
+                        t0 = time.perf_counter()
+                        _, found = li.index.search(q, k_search, params=sp)
+                        latencies[repeat * n + j] = time.perf_counter() - t0
+                        if repeat == 0:
+                            row = found[0]
+                            if excl is not None:
+                                row = row[row != excl[i]]
+                            true_row = truth[i][truth[i] >= 0]
+                            recalls[i] = np.isin(true_row, row[:k]).mean() if len(true_row) else 1.0
                 points.append(
                     SweepPoint(
                         value=v,
@@ -230,4 +257,39 @@ def sweep(
         finally:
             faiss.omp_set_num_threads(prev_threads)
     report(1.0, "Done")
-    return SweepResult(param, k, n, queries.origin, truth_reconstructed, points)
+    return SweepResult(
+        param,
+        k,
+        n,
+        queries.origin,
+        truth_reconstructed,
+        points,
+        repeats=repeats,
+        seed=seed,
+        query_sha256=query_fingerprint(queries),
+        environment=benchmark_environment(),
+        query_seed=queries.seed,
+    )
+
+
+def query_fingerprint(queries: QuerySet) -> str:
+    """Fingerprint query values, shape and self-exclusions using canonical byte order."""
+    digest = hashlib.sha256(str(queries.vectors.shape).encode())
+    digest.update(np.ascontiguousarray(queries.vectors, dtype="<f4").tobytes())
+    if queries.exclude_ids is not None:
+        digest.update(np.ascontiguousarray(queries.exclude_ids, dtype="<i8").tobytes())
+    return digest.hexdigest()
+
+
+def benchmark_environment() -> dict[str, str | int]:
+    """Versions and hardware context for a single-threaded latency measurement."""
+    faiss = import_faiss()
+    return {
+        "python": platform.python_version(),
+        "numpy": np.__version__,
+        "faiss": str(faiss.__version__),
+        "system": platform.system(),
+        "machine": platform.machine(),
+        "processor": platform.processor(),
+        "threads": 1,
+    }

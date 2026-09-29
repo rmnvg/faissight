@@ -21,6 +21,7 @@ FAISS is imported lazily, so importing this package works without FAISS installe
 """
 
 from faissight.core._faiss import FaissNotInstalledError
+from faissight.core.comparison import ComparisonResult, compare_indexes
 from faissight.core.embed import Embedder, EmbedderUnavailableError
 from faissight.core.ivf import (
     Assignments,
@@ -78,6 +79,7 @@ from faissight.core.vectors import VectorMismatchError, VectorSource, from_array
 
 __all__ = [
     "Assignments",
+    "ComparisonResult",
     "Embedder",
     "EmbedderUnavailableError",
     "FaissNotInstalledError",
@@ -116,6 +118,7 @@ __all__ = [
     "VectorSource",
     "assignments",
     "centroids",
+    "compare_indexes",
     "compute_projection",
     "default_values",
     "explain_query",

@@ -298,6 +298,10 @@ def sweep(
     ] = None,
     k: Annotated[int, typer.Option(help="Recall@k.")] = 10,
     n_queries: Annotated[int, typer.Option(help="Queries to use.")] = 200,
+    repeats: Annotated[int, typer.Option(min=1, max=20, help="Timing repetitions per query.")] = 3,
+    seed: Annotated[
+        int, typer.Option(min=0, max=2**32 - 1, help="Query sampling and timing-order seed.")
+    ] = 0,
     target: Annotated[float, typer.Option(help="Target recall for the recommendation.")] = 0.95,
     as_json: Annotated[bool, typer.Option("--json", help="Print JSON instead of a table.")] = False,
 ) -> None:
@@ -310,7 +314,7 @@ def sweep(
         raise _fail(f"Unknown --param {param!r}.", "Use nprobe (IVF) or efSearch (HNSW).")
     try:
         session = Session(index_path, vectors=vectors, ids=ids, queries=queries, disk_cache=False)
-        _, job = session.sweep_job(param, parsed_values, k, n_queries)
+        _, job = session.sweep_job(param, parsed_values, k, n_queries, repeats, seed)
     except FaissNotInstalledError as e:
         raise _fail("FAISS is not installed.", e.hint) from e
     except (FileNotFoundError, IndexLoadError) as e:
@@ -347,6 +351,11 @@ def sweep(
                     "query_origin": result.query_origin,
                     "truth_source": "reconstructed" if result.truth_reconstructed else "raw",
                     "target": target,
+                    "repeats": result.repeats,
+                    "seed": result.seed,
+                    "query_sha256": result.query_sha256,
+                    "query_seed": result.query_seed,
+                    "environment": result.environment,
                     "recommended": rec.value if rec else None,
                     "points": [asdict(p) for p in result.points],
                 },
@@ -407,6 +416,79 @@ def _print_sweep(result: SweepResult, rec: SweepPoint | None, target: float) -> 
     console.print(
         f"Recommended [bold]{result.param.value}={rec.value}[/]: recall {rec.recall:.3f} at "
         f"{rec.latency_mean_ms:.3f} ms/query{faster}."
+    )
+
+
+@app.command()
+def compare(
+    left: Annotated[Path, typer.Argument(help="First FAISS index.")],
+    right: Annotated[Path, typer.Argument(help="Second FAISS index.")],
+    vectors: Annotated[Path, typer.Option(help="Shared raw vectors .npy (required).")],
+    ids: Annotated[Path | None, typer.Option(help="Ids for rows in --vectors.")] = None,
+    queries: Annotated[Path | None, typer.Option(help="Shared query vectors .npy.")] = None,
+    k: Annotated[int, typer.Option(min=1, help="Recall@k.")] = 10,
+    n_queries: Annotated[int, typer.Option(min=1, help="Queries to evaluate.")] = 200,
+    repeats: Annotated[int, typer.Option(min=1, max=20, help="Timing repeats.")] = 3,
+    seed: Annotated[int, typer.Option(min=0, max=2**32 - 1, help="Sampling/timing seed.")] = 0,
+    left_nprobe: Annotated[int | None, typer.Option(min=1)] = None,
+    right_nprobe: Annotated[int | None, typer.Option(min=1)] = None,
+    left_ef_search: Annotated[int | None, typer.Option(min=1)] = None,
+    right_ef_search: Annotated[int | None, typer.Option(min=1)] = None,
+    as_json: Annotated[
+        bool, typer.Option("--json", help="Include per-query neighbour changes.")
+    ] = False,
+) -> None:
+    """Compare recall, latency and serialized size on exactly the same queries and ground truth."""
+    from faissight.core.comparison import compare_indexes
+
+    try:
+        session = Session(left, vectors=vectors, ids=ids, queries=queries, disk_cache=False)
+        result = compare_indexes(
+            session.li,
+            load_index(right),
+            session.source,
+            session.sweep_queries(n_queries, seed),
+            k=k,
+            repeats=repeats,
+            seed=seed,
+            left_nprobe=left_nprobe,
+            right_nprobe=right_nprobe,
+            left_ef_search=left_ef_search,
+            right_ef_search=right_ef_search,
+        )
+    except FaissNotInstalledError as e:
+        raise _fail("FAISS is not installed.", e.hint) from e
+    except (OSError, ValueError) as e:
+        raise _fail(str(e), getattr(e, "hint", None)) from e
+    if as_json:
+        payload = asdict(result)
+        payload["left_path"], payload["right_path"] = str(left), str(right)
+        typer.echo(json.dumps(payload, indent=2))
+        return
+    console.print(
+        f"[bold]Index comparison[/] · recall@{k} · {result.n_queries} identical queries · "
+        f"{repeats} timing repeats · seed {seed}"
+    )
+    table = Table("Metric", left.name, right.name)
+    table.add_row("Kind", result.left.kind, result.right.kind)
+    table.add_row("Search parameters", str(result.left.params), str(result.right.params))
+    table.add_row("Recall", f"{result.left.recall:.4f}", f"{result.right.recall:.4f}")
+    table.add_row(
+        "Mean ms", f"{result.left.latency_mean_ms:.3f}", f"{result.right.latency_mean_ms:.3f}"
+    )
+    table.add_row(
+        "p95 ms", f"{result.left.latency_p95_ms:.3f}", f"{result.right.latency_p95_ms:.3f}"
+    )
+    table.add_row(
+        "Serialized bytes",
+        f"{result.left.serialized_bytes:,}",
+        f"{result.right.serialized_bytes:,}",
+    )
+    console.print(table)
+    changed = sum(bool(d.left_only or d.right_only) for d in result.differences)
+    console.print(
+        f"Neighbour membership changed for {changed}/{result.n_queries} queries. "
+        "Use --json for per-query changes and measurement provenance."
     )
 
 

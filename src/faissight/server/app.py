@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import logging
+from collections.abc import AsyncIterator
+from contextlib import asynccontextmanager
 from pathlib import Path
 
 from fastapi import FastAPI, Request
@@ -12,6 +14,7 @@ from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, Response
 from faissight import __version__
 from faissight.core.embed import EmbedderUnavailableError
 from faissight.core.ivf import NotAnIVFIndexError
+from faissight.core.jobs import JobCapacityError
 from faissight.core.projection import ProjectionUnavailableError
 from faissight.core.search import QueryError
 from faissight.server.routes import ApiError, router
@@ -35,7 +38,16 @@ def _error(status: int, code: str, message: str, hint: str | None = None) -> JSO
 
 def create_app(session: Session, static_dir: Path | None = None) -> FastAPI:
     """Build the app for one :class:`Session`. ``static_dir`` defaults to the bundled UI."""
+
+    @asynccontextmanager
+    async def lifespan(_: FastAPI) -> AsyncIterator[None]:
+        try:
+            yield
+        finally:
+            session.jobs.close()
+
     app = FastAPI(
+        lifespan=lifespan,
         title="faissight",
         version=__version__,
         docs_url="/api/docs",
@@ -61,6 +73,10 @@ def _install_error_handlers(app: FastAPI) -> None:
             loc = ".".join(str(p) for p in err.get("loc", ()) if p != "body")
             parts.append(f"{loc}: {err.get('msg')}" if loc else str(err.get("msg")))
         return _error(422, "VALIDATION_ERROR", "; ".join(parts), "Check the request fields.")
+
+    @app.exception_handler(JobCapacityError)
+    async def capacity_error(_: Request, e: JobCapacityError) -> JSONResponse:
+        return _error(429, "JOB_CAPACITY", str(e), "Wait or cancel a sweep before retrying.")
 
     simple = {
         QueryError: (400, "QUERY_ERROR", None),

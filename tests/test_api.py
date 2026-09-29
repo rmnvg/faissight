@@ -664,3 +664,70 @@ def test_demo_hnsw_ef_cap(synthetic, tmp_path) -> None:
         client.post("/api/search", json={"query": {"id": 1}, "efSearch": 5000}), 403, "DEMO_LIMIT"
     )
     _assert_error(client.post("/api/sweep", json={"values": [16, 4096]}), 403, "DEMO_LIMIT")
+
+
+@pytest.mark.parametrize("kind", ["ivf", "hnsw"])
+def test_int64_ids_remain_exact_across_api(kind) -> None:
+    x = np.random.default_rng(4).normal(size=(200, 8)).astype(np.float32)
+    ids = np.arange(len(x), dtype=np.int64) + 2**53 + 1
+    if kind == "ivf":
+        index = faiss.IndexIVFFlat(faiss.IndexFlatL2(8), 8, 4)
+        index.train(x)
+        index.nprobe = 4
+    else:
+        index = faiss.IndexIDMap2(faiss.IndexHNSWFlat(8, 8))
+    index.add_with_ids(x, ids)
+    client = _client(
+        Session(
+            index,
+            vectors=x,
+            ids=ids,
+            disk_cache=False,
+            metadata=[{"id": int(i), "text": str(i)} for i in ids],
+        )
+    )
+    request = {"query": {"id": str(ids[0])}, "k": 5}
+    response = client.post("/api/search", json=request)
+    assert response.status_code == 200, response.text
+    body = response.json()
+    assert body["recall"] == 1.0
+    assert all(isinstance(r["id"], str) for r in body["results"] + body["truth"])
+    assert all(int(r["id"]) in ids for r in body["results"])
+    assert client.get(f"/api/metadata/{ids[0]}").json()["id"] == str(ids[0])
+    projection = _wait_projection(client).json()
+    assert set(projection["ids"]) == set(map(str, ids))
+    trace = client.post(f"/api/trace/{kind}", json=request)
+    assert trace.status_code == 200, trace.text
+    if kind == "hnsw":
+        tr = trace.json()
+        assert all(isinstance(i, str) for i in tr["nodes"]["ids"])
+        assert all(isinstance(s["expanded"], str) for lv in tr["levels"] for s in lv["steps"])
+        assert all(int(i) in ids for i in tr["faiss_ids"])
+    else:
+        members = client.get("/api/ivf/list/0").json()["members"]
+        assert all(isinstance(r["id"], str) for r in members)
+
+
+def test_sweep_capacity_and_cancellation_api(synthetic) -> None:
+    import threading
+
+    from faissight.core.jobs import JobRunner
+
+    session = Session(synthetic["ivf_flat"], vectors=synthetic["vectors"], disk_cache=False)
+    session.jobs = JobRunner(max_workers=1, max_pending=1)
+    release = threading.Event()
+    blocker = session.jobs.get_or_start("blocker", lambda p: release.wait(5))
+    client = _client(session)
+    try:
+        first = client.post("/api/sweep", json={"values": [1], "n_queries": 10}).json()
+        assert first["status"] == "running"
+        overflow = client.post("/api/sweep", json={"values": [2], "n_queries": 10})
+        _assert_error(overflow, 429, "JOB_CAPACITY")
+        cancelled = client.delete(f"/api/sweep/{first['job_id']}")
+        assert cancelled.status_code == 200
+        assert cancelled.json()["status"] == "cancelled"
+        assert client.get(f"/api/sweep/{first['job_id']}").json()["status"] == "cancelled"
+        _assert_error(client.delete("/api/sweep/missing"), 404, "NOT_FOUND")
+    finally:
+        release.set()
+        assert blocker.wait(5)

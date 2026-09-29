@@ -278,3 +278,47 @@ def test_hnsw_layout_on_fresh_session_does_not_deadlock(synthetic) -> None:
     t.join(30)
     assert not t.is_alive(), "hnsw_layout deadlocked"
     assert out["xy"].shape == (N, 2)
+
+
+def test_sweep_cache_reuses_ground_truth_and_bounds_entries(synthetic) -> None:
+    session = Session(synthetic["ivf_flat"], vectors=synthetic["vectors"], disk_cache=False)
+    first = session._sweep_data(10, 3, 0)
+    assert session._sweep_data(10, 3, 0) is first
+    for seed in range(1, 6):
+        session._sweep_data(10, 3, seed)
+    assert len(session._sweep_inputs) == 4
+    assert (10, 3, 0) not in session._sweep_inputs
+    again = session._sweep_data(10, 3, 0)
+    np.testing.assert_array_equal(first[0].vectors, again[0].vectors)
+    np.testing.assert_array_equal(first[1], again[1])
+
+
+def test_sweep_cache_does_not_retain_oversized_arrays(synthetic, monkeypatch) -> None:
+    monkeypatch.setattr("faissight.session._SWEEP_CACHE_BYTES", 1)
+    session = Session(synthetic["ivf_flat"], vectors=synthetic["vectors"], disk_cache=False)
+    queries, truth = session._sweep_data(10, 3, 0)
+    assert len(queries) == 10
+    assert truth.shape == (10, 3)
+    assert not session._sweep_inputs
+
+
+def test_sweep_keys_include_seed_and_repetitions(synthetic) -> None:
+    session = Session(synthetic["ivf_flat"], vectors=synthetic["vectors"], disk_cache=False)
+    a_id, a = session.sweep_job(values=[1], n_queries=10, repeats=1, seed=3)
+    b_id, b = session.sweep_job(values=[1], n_queries=10, repeats=2, seed=3)
+    c_id, c = session.sweep_job(values=[1], n_queries=10, repeats=1, seed=4)
+    assert len({a_id, b_id, c_id}) == 3
+    for job in (a, b, c):
+        assert job.wait(10)
+        assert job.is_done
+    assert a.result.query_sha256 == b.result.query_sha256
+    assert a.result.query_sha256 != c.result.query_sha256
+    assert a.result.query_seed == 3
+    assert b.result.repeats == 2
+
+
+@pytest.mark.parametrize("bad", [np.empty((0, D)), np.full((1, D), np.nan)])
+def test_invalid_queries_rejected_at_ingestion(synthetic, bad) -> None:
+    with pytest.raises(InputError) as error:
+        Session(synthetic["ivf_flat"], queries=bad)
+    assert error.value.code == "QUERY_MISMATCH"

@@ -1,3 +1,4 @@
+import type { UserId } from './types'
 import type {
   ApiErrorBody,
   Dims,
@@ -85,12 +86,14 @@ export const api = {
     get<ProjectionOrStatus>(`projection?kind=${kind}&method=${method}&dims=${dims}`),
   search: (req: SearchRequest) => post<SearchResponse>('search', req),
   traceIvf: (req: SearchRequest) => post<IvfTrace>('trace/ivf', req),
-  metadata: (id: number) => get<MetadataRow>(`metadata/${id}`),
+  metadata: (id: UserId) => get<MetadataRow>(`metadata/${id}`),
   /** Starts (or reuses) a sweep; the job may still be running (HTTP 202). */
   startSweep: (req: SweepRequest) => post<SweepJob>('sweep', req),
+  cancelSweep: async (jobId: string) =>
+    (await request<SweepJob>(`sweep/${encodeURIComponent(jobId)}`, { method: 'DELETE' })).body,
   sweep: (jobId: string) => get<SweepJob>(`sweep/${encodeURIComponent(jobId)}`),
   hnswStats: () => get<HnswStats>('hnsw/stats'),
-  hnswGraph: (level: number, limit: number, around: number | null) =>
+  hnswGraph: (level: number, limit: number, around: UserId | null) =>
     get<HnswGraph>(
       `hnsw/graph?level=${level}&limit=${limit}${around === null ? '' : `&around=${around}`}`,
     ),

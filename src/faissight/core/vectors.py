@@ -78,20 +78,54 @@ def from_arrays(
             f"Got {x.shape[0]:,} vectors but the index holds {li.ntotal:,}.",
             "Pass exactly the vectors that were added to the index.",
         )
+    if ids is not None and np.asarray(ids).dtype.kind not in ("i", "u"):
+        raise VectorMismatchError(
+            "Ids must be integers.", "Supply a 1-D int64 array without fractional ids."
+        )
     id_arr = np.arange(len(x), dtype=np.int64) if ids is None else np.asarray(ids, dtype=np.int64)
     if id_arr.shape != (len(x),):
         raise VectorMismatchError(
             f"Got {id_arr.size:,} ids for {len(x):,} vectors.", "Ids must be a 1-D int64 array."
         )
+    if (id_arr < 0).any():
+        raise VectorMismatchError(
+            "Ids must be non-negative.", "Negative ids are reserved for missing results."
+        )
+    for start in range(0, len(x), _BATCH):
+        if not np.isfinite(x[start : start + _BATCH]).all():
+            raise VectorMismatchError(
+                "Vectors contain NaN or infinite values.", "Supply finite float32 vectors."
+            )
+    validate_ids(li, id_arr)
     steps = np.diff(id_arr)
     if (steps > 0).all():
         # Already sorted and unique (e.g. the default 0..n-1): keep the array, no copy.
         return VectorSource(x, id_arr, reconstructed=False)
     order = np.argsort(id_arr, kind="stable")
     sorted_ids = id_arr[order]
-    if len(sorted_ids) > 1 and (np.diff(sorted_ids) == 0).any():
-        raise VectorMismatchError("Ids contain duplicates.", "Each vector needs a unique id.")
     return VectorSource(x[order], sorted_ids, reconstructed=False)
+
+
+def validate_ids(li: LoadedIndex, ids: IntArray) -> None:
+    """Require one raw vector for each user-facing index id, regardless of row order."""
+    if li.ids is not None:
+        expected = li.ids
+    elif li.ivf is not None:
+        from faissight.core.ivf import stored_ids
+
+        expected = np.concatenate(
+            [stored_ids(li.ivf, i) for i in range(li.ivf.nlist)] or [np.empty(0, dtype=np.int64)]
+        )
+    else:
+        expected = np.arange(li.ntotal, dtype=np.int64)
+    actual = np.sort(ids)
+    if len(actual) > 1 and (actual[1:] == actual[:-1]).any():
+        raise VectorMismatchError("Ids contain duplicates.", "Each vector needs a unique id.")
+    if not np.array_equal(actual, np.sort(expected)):
+        raise VectorMismatchError(
+            "Raw-vector ids do not match the ids stored in the index.",
+            "Pass --ids with the exact int64 ids used when adding each row of --vectors.",
+        )
 
 
 def reconstruct_all(li: LoadedIndex) -> VectorSource:

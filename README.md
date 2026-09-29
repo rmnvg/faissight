@@ -109,12 +109,46 @@ faissight serve INDEX [--vectors v.npy] [--ids ids.npy] [--meta chunks.jsonl]
                       [--embedder all-MiniLM-L6-v2] [--queries q.npy]
                       [--host 127.0.0.1] [--port 8765] [--no-browser] [--max-points 50000]
 faissight info INDEX                          # kind, wrappers, parameters
-faissight sweep INDEX --vectors v.npy [--param nprobe] [--target 0.95] [--json]
+faissight sweep INDEX --vectors v.npy [--param nprobe] [--target 0.95]
+                      [--repeats 3] [--seed 0] [--json]
+faissight compare LEFT RIGHT --vectors v.npy [--queries q.npy] [--ids ids.npy]
+                      [--left-nprobe 4] [--right-ef-search 64] [--json]
 faissight demo [--index ivf_pq|ivf_flat|hnsw]
 ```
 
 `faissight sweep` exits with code 2 when no value reaches `--target`, so it can guard recall
 in CI.
+
+## Reproducible tuning and index comparison
+
+Sweeps warm up each setting, then time each query three times on one FAISS thread.
+Use `--repeats` and `--seed` (also available in the Tuner) to control the measurement.
+JSON exports include the query-set SHA-256, sampling seed, timing seed, repetition count,
+and Python/NumPy/FAISS and platform versions. Supplied `--queries` use the first
+`--n-queries` rows; the seed controls sampling only when queries are drawn from stored vectors.
+
+```bash
+faissight compare exact.index compressed.index --vectors vectors.npy \
+  --queries queries.npy --right-nprobe 16 --repeats 5 --seed 42 --json > comparison.json
+```
+
+Comparison uses the same raw ground truth and queries for both indexes, reports recall,
+mean/p95 latency and serialized index size, and lists neighbours unique to either index
+for each query. Serialized size is not process RAM. Both indexes must use the same metric,
+input dimension and user IDs. Python users can call `faissight.core.compare_indexes` with
+loaded indexes, a `VectorSource`, and a `QuerySet`. The comparison is currently available
+through Python and the CLI.
+
+Raw-vector IDs are checked against index IDs before analysis. Supply `--ids` for custom
+IDs. The API uses numeric IDs through `2**53 - 1` and decimal strings above that limit,
+preserving the full non-negative int64 range in browser inputs, links and exports.
+
+Background work uses at most two workers and eight queued jobs per session; a full queue
+returns `429 JOB_CAPACITY`. The Tuner's **Cancel sweep** button (or
+`DELETE /api/sweep/{job_id}`) stops queued work immediately and running work at its next
+checkpoint. A native FAISS call already running must finish first. Sessions retain up to
+32 completed jobs for one hour, with expired entries removed on the next access; query and
+ground-truth caches are limited to four entries and 64 MiB. An evicted sweep can be rerun.
 
 ## How it compares
 
@@ -140,7 +174,7 @@ in CI.
 ## Roadmap
 
 - IVF-HNSW (HNSW coarse quantizer) and IVF FastScan support
-- Compare two indexes side by side on the same queries
+- Bring the CLI/Python index comparison into a side-by-side web view
 - Evaluation with labelled query→relevant-chunk pairs (retrieval relevance, not just ANN recall)
 - Load FAISS stores directly from LangChain / LlamaIndex save folders
 - VS Code extension

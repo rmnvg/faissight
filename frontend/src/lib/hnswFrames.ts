@@ -1,3 +1,4 @@
+import type { UserId } from '../api/types'
 import type { HnswTrace, HnswVisit } from '../api/types'
 
 /** One animation frame: scanning the links of one node. */
@@ -6,7 +7,7 @@ export interface Frame {
   /** 0-based index of this step within its level. */
   levelStep: number
   levelSteps: number
-  expanded: number
+  expanded: UserId
   visits: HnswVisit[]
 }
 
@@ -30,13 +31,13 @@ export function buildFrames(trace: HnswTrace): Frame[] {
 export interface FrameState {
   frame: Frame
   /** Nodes evaluated on the current level so far (including the level's entry node). */
-  visited: Set<number>
+  visited: Set<UserId>
   /** Nodes whose links were scanned on the current level so far. */
-  expanded: Set<number>
+  expanded: Set<UserId>
   /** Level 0: queued candidates not yet expanded. Upper levels: the current nearest node. */
-  frontier: Set<number>
+  frontier: Set<UserId>
   /** Where the search entered each level up to now (the descent path). */
-  entries: { level: number; node: number }[]
+  entries: { level: number; node: UserId }[]
   isLast: boolean
 }
 
@@ -45,9 +46,9 @@ export function stateAt(trace: HnswTrace, frames: Frame[], index: number): Frame
   const i = Math.max(0, Math.min(index, frames.length - 1))
   const frame = frames[i]
   const entry = trace.levels.find((l) => l.level === frame.level)?.entry ?? frame.expanded
-  const visited = new Set<number>([entry])
-  const expanded = new Set<number>()
-  const queued = new Set<number>([entry])
+  const visited = new Set<UserId>([entry])
+  const expanded = new Set<UserId>()
+  const queued = new Set<UserId>([entry])
   let nearest = entry
   for (let j = 0; j <= i; j++) {
     const f = frames[j]

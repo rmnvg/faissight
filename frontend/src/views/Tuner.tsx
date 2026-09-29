@@ -29,6 +29,8 @@ export default function Tuner({ info, params }: { info: Info; params: URLSearchP
   const [valuesText, setValuesText] = useState(defaults?.values.join(', ') ?? '')
   const [k, setK] = useState(10)
   const [nQueries, setNQueries] = useState(200)
+  const [repeats, setRepeats] = useState(3)
+  const [seed, setSeed] = useState(0)
   const [target, setTarget] = useState(0.95)
   const [formError, setFormError] = useState<string | null>(null)
   const jobId = params.get('job')
@@ -39,6 +41,7 @@ export default function Tuner({ info, params }: { info: Info; params: URLSearchP
   })
   const sweep = useSweep(jobId)
   const job = sweep.data
+  const cancel = useMutation({ mutationFn: api.cancelSweep, onSuccess: () => sweep.refetch() })
 
   if (!defaults) {
     return (
@@ -61,7 +64,7 @@ export default function Tuner({ info, params }: { info: Info; params: URLSearchP
       return
     }
     setFormError(null)
-    start.mutate({ param, values, k, n_queries: nQueries })
+    start.mutate({ param, values, k, n_queries: nQueries, repeats, seed })
   }
 
   const result = job?.status === 'done' ? job.result : null
@@ -105,6 +108,12 @@ export default function Tuner({ info, params }: { info: Info; params: URLSearchP
               max={info.demo_limits?.max_sweep_queries ?? 10000}
             />
           </Field>
+          <Field label="Timing repeats" className="w-28">
+            <NumberInput value={repeats} onChange={setRepeats} min={1} max={info.demo_limits ? 3 : 20} />
+          </Field>
+          <Field label="Seed" className="w-28">
+            <NumberInput value={seed} onChange={setSeed} min={0} max={4294967295} />
+          </Field>
           <button
             type="submit"
             disabled={start.isPending || job?.status === 'running'}
@@ -112,10 +121,16 @@ export default function Tuner({ info, params }: { info: Info; params: URLSearchP
           >
             {job?.status === 'running' ? 'Sweeping…' : 'Run sweep'}
           </button>
+          {job?.status === 'running' && jobId && (
+            <button type="button" disabled={cancel.isPending} onClick={() => cancel.mutate(jobId)}
+              className="rounded-lg border border-line px-4 py-2 text-sm text-ink">
+              Cancel sweep
+            </button>
+          )}
         </form>
         {formError && <p className="mt-2 text-sm text-critical">{formError}</p>}
         <p className="mt-2 text-xs text-muted">
-          Each query runs alone on one FAISS thread after a warm-up pass, so latencies are
+          Each query runs repeatedly on one FAISS thread after warming up each setting. Latencies are
           comparable across values (not your production throughput).
         </p>
       </Card>
@@ -136,8 +151,15 @@ export default function Tuner({ info, params }: { info: Info; params: URLSearchP
         </Card>
       )}
       {job?.status === 'failed' && <Banner tone="error">Sweep failed: {job.error}</Banner>}
+      {job?.status === 'cancelled' && <Banner>Sweep cancelled.</Banner>}
+      {start.isError && <Banner tone="error">{start.error.message}</Banner>}
+      {cancel.isError && <Banner tone="error">{cancel.error.message}</Banner>}
       {sweep.isError && <Banner tone="error">{sweep.error.message}</Banner>}
 
+      {result && <p className="text-xs text-muted">
+        {result.repeats} timing repeats · seed {result.seed} · query set {result.query_sha256.slice(0, 12)}.
+        JSON exports include measurement settings and environment versions.
+      </p>}
       {result && (
         <Results result={result} target={target} setTarget={setTarget} hasRefine={info.has_refine} />
       )}

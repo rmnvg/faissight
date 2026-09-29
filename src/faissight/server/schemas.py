@@ -2,11 +2,23 @@
 
 from __future__ import annotations
 
-from typing import Any, Literal
+from typing import Annotated, Any, Literal
 
-from pydantic import BaseModel, ConfigDict, Field, model_validator
+from pydantic import BaseModel, ConfigDict, Field, PlainSerializer, model_validator
 
 Scalar = int | float | bool | str
+
+# Preserve existing numeric ids while encoding values outside JavaScript's exact range.
+# Python continues to use int internally; clients can send decimal strings as well.
+UserId = Annotated[
+    int,
+    Field(ge=-1, le=2**63 - 1),
+    PlainSerializer(
+        lambda value: str(value) if value > 2**53 - 1 else value,
+        return_type=int | str,
+        when_used="json",
+    ),
+]
 
 
 class ErrorResponse(BaseModel):
@@ -96,7 +108,7 @@ class ListSizesResponse(BaseModel):
 
 
 class MemberOut(BaseModel):
-    id: int
+    id: UserId
     snippet: dict[str, str] | None = None
 
 
@@ -112,7 +124,7 @@ class ListMembersResponse(BaseModel):
 
 
 class JobStatusResponse(BaseModel):
-    status: Literal["running", "done", "failed"]
+    status: Literal["running", "done", "failed", "cancelled"]
     progress: float
     message: str
     error: str | None = None
@@ -123,7 +135,7 @@ class ProjectionResponse(BaseModel):
     kind: Literal["points", "centroids"]
     method: Literal["pca", "umap"]
     dims: Literal[2, 3]
-    ids: list[int]
+    ids: list[UserId]
     """Point ids (``kind=points``) or list numbers (``kind=centroids``)."""
     x: list[float]
     y: list[float]
@@ -143,7 +155,7 @@ class ProjectionRef(BaseModel):
 
 
 class QueryIn(BaseModel):
-    id: int | None = None
+    id: UserId | None = None
     vector: list[float] | None = None
     text: str | None = None
 
@@ -169,7 +181,7 @@ class SearchRequest(BaseModel):
 
 class ResultRow(BaseModel):
     rank: int
-    id: int
+    id: UserId
     distance: float
     list_no: int | None = None
     in_truth: bool | None = None
@@ -178,7 +190,7 @@ class ResultRow(BaseModel):
 
 class TruthRow(BaseModel):
     rank: int
-    id: int
+    id: UserId
     distance: float
     list_no: int | None = None
     probe_rank: int | None = None
@@ -224,7 +236,7 @@ class IvfTraceResponse(BaseModel):
 
 
 class MetadataResponse(BaseModel):
-    id: int
+    id: UserId
     row: dict[str, Any]
 
 
@@ -240,6 +252,8 @@ class SweepRequest(BaseModel):
     values: list[int] | None = Field(None, min_length=1, max_length=64)
     k: int = Field(10, ge=1, le=1000)
     n_queries: int = Field(200, ge=1, le=10_000)
+    repeats: int = Field(3, ge=1, le=20)
+    seed: int = Field(0, ge=0, le=2**32 - 1)
 
 
 class SweepPointOut(BaseModel):
@@ -257,11 +271,16 @@ class SweepResultOut(BaseModel):
     truth_source: Literal["raw", "reconstructed"]
     points: list[SweepPointOut]
     pareto_values: list[int]
+    repeats: int
+    seed: int
+    query_sha256: str
+    environment: dict[str, str | int]
+    query_seed: int | None = None
 
 
 class SweepJobResponse(BaseModel):
     job_id: str
-    status: Literal["running", "done", "failed"]
+    status: Literal["running", "done", "failed", "cancelled"]
     progress: float
     message: str
     error: str | None = None
@@ -282,7 +301,7 @@ class HnswLevelStats(BaseModel):
 
 
 class HnswStatsResponse(BaseModel):
-    entry_point: int
+    entry_point: UserId
     max_level: int
     m: int
     ef_search: int
@@ -295,7 +314,7 @@ class HnswGraphResponse(BaseModel):
     level: int
     n_level_nodes: int
     sampled: bool
-    ids: list[int]
+    ids: list[UserId]
     x: list[float]
     y: list[float]
     top_levels: list[int]
@@ -305,30 +324,37 @@ class HnswGraphResponse(BaseModel):
 
 
 class HnswVisitOut(BaseModel):
-    node: int
+    node: UserId
     distance: float
     accepted: bool
 
 
 class HnswStepOut(BaseModel):
-    expanded: int
+    expanded: UserId
     expanded_distance: float
     visits: list[HnswVisitOut]
 
 
 class HnswLevelTrace(BaseModel):
     level: int
-    entry: int
+    entry: UserId
     steps: list[HnswStepOut]
 
 
 class HnswTraceNeighbour(BaseModel):
     rank: int
-    id: int
+    id: UserId
     distance: float
     outcome: Literal["FOUND", "VISITED_NOT_KEPT", "NOT_REACHED"]
     top_level: int
     snippet: dict[str, str] | None = None
+
+
+class HnswTraceNodes(BaseModel):
+    ids: list[UserId]
+    x: list[float]
+    y: list[float]
+    top_levels: list[int]
 
 
 class HnswTraceResponse(BaseModel):
@@ -336,17 +362,17 @@ class HnswTraceResponse(BaseModel):
     higher_is_closer: bool
     ef_search: int
     k: int
-    entry_point: int
+    entry_point: UserId
     max_level: int
     levels: list[HnswLevelTrace]
     """Top level first; level 0 last."""
     results: list[ResultRow]
-    faiss_ids: list[int]
+    faiss_ids: list[UserId]
     """What ``index.search`` itself returned, for checking the reconstruction."""
     overlap_with_faiss: float
     truth: list[HnswTraceNeighbour] | None = None
     recall: float | None = None
-    nodes: dict[str, list[float]]
+    nodes: HnswTraceNodes
     """Layout for every node in the trace: ``ids``, ``x``, ``y``, ``top_levels``."""
     query_xy: list[float] | None = None
 
@@ -366,7 +392,7 @@ class PqListError(BaseModel):
 
 
 class PqWorst(BaseModel):
-    id: int
+    id: UserId
     error: float
     relative: float
     list_no: int | None = None
