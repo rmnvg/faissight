@@ -64,4 +64,23 @@ describe('api client', () => {
     const err = (await api.info().catch((e: unknown) => e)) as ApiError
     expect([err.status, err.code, err.hint]).toEqual([400, 'NOT_IVF', 'Use /search.'])
   })
+
+  it.each([
+    ['an HTML page', '<!doctype html><title>Sign in</title>', 'text/html'],
+    ['an empty body', '', 'application/json'],
+    ['a bare JSON value', 'null', 'application/json'],
+    ['a JSON array', '[1, 2]', 'application/json'],
+  ])('rejects %s sent with HTTP 200', async (_, text, type) => {
+    vi.stubGlobal('fetch', vi.fn(() => Promise.resolve(new Response(text, { status: 200, headers: { 'content-type': type } }))))
+    const err = (await api.info().catch((e: unknown) => e)) as ApiError
+    expect(err).toBeInstanceOf(ApiError)
+    expect(err.code).toBe('INVALID_RESPONSE')
+    expect(err.message).toContain('info')
+  })
+
+  it('still reports a non-JSON error page by its HTTP status', async () => {
+    vi.stubGlobal('fetch', vi.fn(() => Promise.resolve(new Response('Bad gateway', { status: 502 }))))
+    const err = (await api.info().catch((e: unknown) => e)) as ApiError
+    expect([err.code, err.message]).toEqual(['HTTP_502', 'Bad gateway'])
+  })
 })

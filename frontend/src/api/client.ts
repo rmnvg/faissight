@@ -85,10 +85,21 @@ async function request<T>(
     caller?.removeEventListener('abort', onCallerAbort)
   }
   let body: unknown = null
+  let parsed = false
   try {
     body = text ? JSON.parse(text) : null
+    parsed = true
   } catch {
     body = null
+  }
+  if (res.ok && !(parsed && typeof body === 'object' && body !== null && !Array.isArray(body))) {
+    // Every endpoint answers with a JSON object; anything else (an HTML page from a proxy
+    // or login wall, an empty body) would otherwise be cast to the expected type and fail later.
+    throw new ApiError(res.status, {
+      error_code: 'INVALID_RESPONSE',
+      message: `The server's answer to ${path.split('?')[0]} was not faissight JSON.`,
+      hint: 'A proxy or login page may be answering instead of `faissight serve`; check the URL.',
+    })
   }
   if (!res.ok) {
     const err = body as Partial<ApiErrorBody> | null
