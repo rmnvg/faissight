@@ -125,7 +125,8 @@ def _drop_excluded(
 class GroundTruth:
     """Exact k-NN over a :class:`VectorSource`, using the same metric as the index.
 
-    Builds a brute-force ``IndexFlat`` (costs ``n * d * 4`` bytes on top of the source).
+    Brute force with ``faiss.knn`` directly over the source's array: unlike an
+    ``IndexFlat``, it doesn't copy the vectors (1.5 GB saved at 1M x 384).
     """
 
     def __init__(self, source: VectorSource, metric: Metric) -> None:
@@ -134,10 +135,13 @@ class GroundTruth:
             raise ValueError("Ground truth needs an L2 or inner-product metric.")
         self.source = source
         self.metric = metric
-        d = source.vectors.shape[1]
-        faiss_metric = faiss.METRIC_L2 if metric is Metric.L2 else faiss.METRIC_INNER_PRODUCT
-        self._index = faiss.IndexFlat(d, faiss_metric)
-        self._index.add(source.vectors)
+        self.d = int(source.vectors.shape[1])
+        self._faiss_metric = faiss.METRIC_L2 if metric is Metric.L2 else faiss.METRIC_INNER_PRODUCT
+
+    def _knn(self, q: FloatArray, k: int) -> tuple[FloatArray, IntArray]:
+        faiss = import_faiss()
+        distances, rows = faiss.knn(q, self.source.vectors, k, metric=self._faiss_metric)
+        return distances, rows
 
     @property
     def reconstructed(self) -> bool:
@@ -146,10 +150,10 @@ class GroundTruth:
 
     def search(self, query: npt.ArrayLike, k: int, exclude_id: int | None = None) -> SearchResult:
         """Exact top-k (user-facing ids), optionally excluding one id."""
-        q = _as_query(query, self._index.d)
+        q = _as_query(query, self.d)
         k_search = min(k + (exclude_id is not None), max(len(self.source), 1))
         t0 = time.perf_counter()
-        distances, rows = self._index.search(q, k_search)
+        distances, rows = self._knn(q, k_search)
         latency_ms = (time.perf_counter() - t0) * 1000
         rows = rows[0]
         ids = np.where(rows >= 0, self.source.ids[np.maximum(rows, 0)], -1)
@@ -164,11 +168,11 @@ class GroundTruth:
         ``exclude_ids[i]`` is dropped from row ``i`` (queries that are stored vectors).
         """
         q = np.ascontiguousarray(queries, dtype=np.float32)
-        if q.ndim != 2 or q.shape[1] != self._index.d:
-            raise ValueError(f"Queries must have shape (n, {self._index.d}), got {q.shape}.")
+        if q.ndim != 2 or q.shape[1] != self.d:
+            raise ValueError(f"Queries must have shape (n, {self.d}), got {q.shape}.")
         excl = None if exclude_ids is None else np.asarray(exclude_ids, dtype=np.int64)
         k_search = min(k + (excl is not None), max(len(self.source), 1))
-        _, rows = self._index.search(q, k_search)
+        _, rows = self._knn(q, k_search)
         ids = np.where(rows >= 0, self.source.ids[np.maximum(rows, 0)], -1)
         out = np.full((len(q), k), -1, dtype=np.int64)
         for i in range(len(q)):

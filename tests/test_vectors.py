@@ -107,3 +107,12 @@ def test_direct_map_does_not_change_search(synthetic, x) -> None:
 def test_reconstruct_unsupported() -> None:
     with pytest.raises(ValueError, match="Cannot reconstruct"):
         V.reconstruct_all(load_index(faiss.IndexLSH(8, 16)))
+
+
+def test_from_arrays_does_not_copy_sorted_input(synthetic, x) -> None:
+    # Large vector sets must not be duplicated when ids are already in order.
+    li = load_index(synthetic["flat_l2"])
+    assert np.shares_memory(V.from_arrays(li, x).vectors, x)
+    shuffled = V.from_arrays(li, x, np.arange(N)[::-1].copy())
+    assert not np.shares_memory(shuffled.vectors, x)
+    np.testing.assert_array_equal(shuffled.get([0]), x[[N - 1]])  # id 0 is the last row

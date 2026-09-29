@@ -83,6 +83,10 @@ def from_arrays(
         raise VectorMismatchError(
             f"Got {id_arr.size:,} ids for {len(x):,} vectors.", "Ids must be a 1-D int64 array."
         )
+    steps = np.diff(id_arr)
+    if (steps > 0).all():
+        # Already sorted and unique (e.g. the default 0..n-1): keep the array, no copy.
+        return VectorSource(x, id_arr, reconstructed=False)
     order = np.argsort(id_arr, kind="stable")
     sorted_ids = id_arr[order]
     if len(sorted_ids) > 1 and (np.diff(sorted_ids) == 0).any():
