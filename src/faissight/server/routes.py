@@ -121,6 +121,9 @@ def info(session: SessionDep) -> S.InfoResponse:
         ground_truth_source=_truth_source(session) if li.is_supported else None,
         max_points=session.max_points,
         sweep=_sweep_defaults(session),
+        demo_limits=S.DemoLimitsOut(**session.demo_limits.__dict__)
+        if session.demo_limits is not None
+        else None,
         inputs=S.InputsOut(
             raw_vectors=session.has_raw_vectors,
             metadata_rows=len(md) if md is not None else None,

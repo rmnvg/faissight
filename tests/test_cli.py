@@ -345,3 +345,13 @@ def test_error_hints_keep_brackets(synthetic, monkeypatch) -> None:
     result = runner.invoke(app, ["info", str(synthetic["ivf_flat"])])
     assert result.exit_code == 1
     assert "faissight[faiss-cpu]" in result.output
+
+
+def test_serve_demo_mode_flag(synthetic, fake_uvicorn) -> None:
+    result = runner.invoke(
+        app, ["serve", str(synthetic["flat_l2"]), "--demo-mode", "--no-browser", "--port", "8916"]
+    )
+    assert result.exit_code == 0, result.output
+    assert "Demo mode" in result.output
+    (server,) = FakeServer.instances
+    assert server.config.app.state.session.demo_limits is not None

@@ -72,8 +72,18 @@ export function Sidebar({
           <div className="truncate font-medium text-ink" title={info.name}>
             {info.name}
           </div>
-          <div className="mt-1 inline-block rounded bg-surface-2 px-1.5 py-0.5 font-mono text-[11px] text-ink">
-            {info.kind}
+          <div className="mt-1 flex flex-wrap gap-1">
+            <span className="rounded bg-surface-2 px-1.5 py-0.5 font-mono text-[11px] text-ink">
+              {info.kind}
+            </span>
+            {info.demo_limits && (
+              <span
+                className="rounded bg-accent-wash px-1.5 py-0.5 text-[11px] text-ink"
+                title="Public demo: k, sweeps and efSearch are capped; UMAP only if precomputed"
+              >
+                Read-only demo
+              </span>
+            )}
           </div>
           <dl className="mt-2 grid grid-cols-[auto_1fr] gap-x-3 gap-y-1 text-ink-2">
             <dt>vectors</dt>

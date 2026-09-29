@@ -592,3 +592,75 @@ def test_pq_error_unsupported(binary_index_path) -> None:
     _assert_error(
         _client(Session(binary_index_path)).get("/api/pq/error"), 400, "UNSUPPORTED_INDEX"
     )
+
+
+# --- demo mode ---------------------------------------------------------------------------
+
+
+@pytest.fixture(scope="module")
+def demo_client(synthetic, tmp_path_factory):
+    cache = tmp_path_factory.mktemp("demo-cache")
+    s = Session(
+        synthetic["ivf_flat"], vectors=synthetic["vectors"], cache_root=cache, demo_mode=True
+    )
+    return _client(s), cache
+
+
+def test_demo_info_reports_limits(demo_client, ivf_client) -> None:
+    client, _ = demo_client
+    limits = client.get("/api/info").json()["demo_limits"]
+    assert limits["max_k"] == 100
+    assert limits["max_sweep_queries"] == 200
+    assert ivf_client.get("/api/info").json()["demo_limits"] is None
+
+
+@pytest.mark.parametrize(
+    ("path", "payload"),
+    [
+        ("/api/search", {"query": {"id": 1}, "k": 101}),
+        ("/api/sweep", {"n_queries": 201}),
+        ("/api/sweep", {"values": list(range(1, 14))}),
+        ("/api/sweep", {"k": 51}),
+    ],
+)
+def test_demo_caps(demo_client, path, payload) -> None:
+    client, _ = demo_client
+    body = _assert_error(client.post(path, json=payload), 403, "DEMO_LIMIT")
+    assert "locally" in body["hint"]
+
+
+def test_demo_allows_normal_requests(demo_client) -> None:
+    client, _ = demo_client
+    assert client.post("/api/search", json={"query": {"id": 1}, "k": 10}).status_code == 200
+    assert client.post("/api/sweep", json={"n_queries": 20}).status_code in (200, 202)
+
+
+def test_demo_umap_only_when_precomputed(synthetic, demo_client, monkeypatch) -> None:
+    client, cache = demo_client
+    _assert_error(client.get("/api/projection", params={"method": "umap"}), 403, "DEMO_LIMIT")
+    # Precompute (as the Docker build does) with a normal session sharing the cache; fake
+    # the UMAP fit so the test stays fast.
+    import faissight.core.projection as P
+
+    def fake_umap(x, dims, seed):
+        class Model:
+            embedding_ = x[:, :dims]
+
+            def transform(self, c):
+                return c[:, :dims]
+
+        return Model()
+
+    monkeypatch.setattr(P, "_fit_umap", fake_umap)
+    monkeypatch.setattr("faissight.session.importlib.util.find_spec", lambda name: object())
+    warm = Session(synthetic["ivf_flat"], vectors=synthetic["vectors"], cache_root=cache)
+    assert warm.projection_job("umap", 2).wait(30)
+    assert _wait_projection(client, method="umap").status_code == 200
+
+
+def test_demo_hnsw_ef_cap(synthetic, tmp_path) -> None:
+    client = _client(Session(synthetic["hnsw_flat"], cache_root=tmp_path, demo_mode=True))
+    _assert_error(
+        client.post("/api/search", json={"query": {"id": 1}, "efSearch": 5000}), 403, "DEMO_LIMIT"
+    )
+    _assert_error(client.post("/api/sweep", json={"values": [16, 4096]}), 403, "DEMO_LIMIT")

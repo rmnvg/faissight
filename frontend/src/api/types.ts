@@ -39,6 +39,14 @@ export interface Info {
   ground_truth_source: 'raw' | 'reconstructed' | null
   max_points: number
   sweep: { param: SweepParam; values: number[]; max_value: number | null } | null
+  demo_limits: {
+    max_k: number
+    max_ef_search: number
+    max_sweep_queries: number
+    max_sweep_values: number
+    max_sweep_k: number
+    umap_from_cache_only: boolean
+  } | null
   inputs: {
     raw_vectors: boolean
     metadata_rows: number | null

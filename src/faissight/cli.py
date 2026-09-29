@@ -181,6 +181,8 @@ def _serve_summary(session: Session, url: str) -> None:
         )
     if session.embedder_name:
         console.print(f"Embedder [cyan]{session.embedder_name}[/] is loading in the background.")
+    if session.demo_limits is not None:
+        console.print("[yellow]Demo mode:[/] read-only limits are on (k, sweeps, efSearch, UMAP).")
     console.print(f"Serving on [bold link={url}]{url}[/]  (Ctrl+C to stop)")
 
 
@@ -222,6 +224,13 @@ def serve(
     no_cache: Annotated[
         bool, typer.Option("--no-cache", help="Don't read/write the projection disk cache.")
     ] = False,
+    demo_mode: Annotated[
+        bool,
+        typer.Option(
+            "--demo-mode",
+            help="Read-only public demo: cap k, sweeps and efSearch; UMAP only if precomputed.",
+        ),
+    ] = False,
 ) -> None:
     """Start the faissight web UI for a FAISS index."""
     if not _port_available(host, port):
@@ -238,6 +247,7 @@ def serve(
                 max_points=max_points,
                 disk_cache=not no_cache,
                 normalize_text=normalize_text,
+                demo_mode=demo_mode,
             )
     except FaissNotInstalledError as e:
         raise _fail("FAISS is not installed.", e.hint) from e
@@ -452,4 +462,5 @@ def demo(
         max_points=DEFAULT_MAX_POINTS,
         normalize_text=True,
         no_cache=False,
+        demo_mode=False,
     )

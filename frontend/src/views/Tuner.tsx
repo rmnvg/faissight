@@ -92,13 +92,18 @@ export default function Tuner({ info, params }: { info: Info; params: URLSearchP
             />
           </Field>
           <Field label="k" className="w-24">
-            <NumberInput value={k} onChange={setK} min={1} max={1000} />
+            <NumberInput value={k} onChange={setK} min={1} max={info.demo_limits?.max_sweep_k ?? 1000} />
           </Field>
           <Field
             label={givenQueries ? `queries (of ${givenQueries} given)` : 'queries (sampled)'}
             className="w-44"
           >
-            <NumberInput value={nQueries} onChange={setNQueries} min={1} max={10000} />
+            <NumberInput
+              value={nQueries}
+              onChange={setNQueries}
+              min={1}
+              max={info.demo_limits?.max_sweep_queries ?? 10000}
+            />
           </Field>
           <button
             type="submit"

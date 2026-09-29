@@ -8,6 +8,7 @@ import importlib.util
 import os
 import threading
 from collections.abc import Callable
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, TypeVar
 
@@ -32,6 +33,7 @@ from faissight.core.projection import (
     ProjectionCache,
     ProjectionMethod,
     ProjectionUnavailableError,
+    cached_projection,
     compute_projection,
     core_vectors,
     default_cache_root,
@@ -85,6 +87,26 @@ def _load_array(value: ArrayInput, name: str) -> np.ndarray[Any, Any]:
     return np.asarray(value)
 
 
+class DemoLimitError(ValueError):
+    """A request exceeds what a public demo allows."""
+
+    def __init__(self, message: str) -> None:
+        super().__init__(message)
+        self.hint = "This is a read-only demo with limits. Run faissight locally to lift them."
+
+
+@dataclass(frozen=True)
+class DemoLimits:
+    """Caps for a shared, read-only deployment (e.g. a Hugging Face Space)."""
+
+    max_k: int = 100
+    max_ef_search: int = 1024
+    max_sweep_queries: int = 200
+    max_sweep_values: int = 12
+    max_sweep_k: int = 50
+    umap_from_cache_only: bool = True
+
+
 class Session:
     """Everything faissight knows about one index.
 
@@ -106,6 +128,7 @@ class Session:
         cache_root: Path | None = None,
         disk_cache: bool = True,
         normalize_text: bool | None = None,
+        demo_mode: bool = False,
     ) -> None:
         self.li: LoadedIndex = load_index(index)
         self.jobs = JobRunner()
@@ -158,6 +181,7 @@ class Session:
             self.embedder_name = getattr(embedder, "__name__", type(embedder).__name__)
             self._embedder = embedder
         self.normalize_text = normalize_text
+        self.demo_limits: DemoLimits | None = DemoLimits() if demo_mode else None
 
     # --- lazily computed state ------------------------------------------------------------
 
@@ -267,6 +291,12 @@ class Session:
         compare: bool = True,
     ) -> QueryReport:
         """Resolve, search, and (with ``compare``) explain against exact ground truth."""
+        if self.demo_limits is not None:
+            lim = self.demo_limits
+            if k > lim.max_k:
+                raise DemoLimitError(f"k is capped at {lim.max_k} in this demo.")
+            if ef_search is not None and ef_search > lim.max_ef_search:
+                raise DemoLimitError(f"efSearch is capped at {lim.max_ef_search} in this demo.")
         rq = resolve_query(
             self.li,
             id=id,
@@ -298,6 +328,15 @@ class Session:
             raise ProjectionUnavailableError()
         if not self.li.is_supported:
             raise ValueError(f"Cannot project: {self.li.unsupported_reason}")
+        key = ("projection", method.value, dims)
+        if (
+            self.demo_limits is not None
+            and self.demo_limits.umap_from_cache_only
+            and method is ProjectionMethod.UMAP
+            and self.jobs.get(key) is None
+            and not self._umap_cached(dims)
+        ):
+            raise DemoLimitError("UMAP isn't precomputed for this view in the demo; use PCA.")
 
         def work(progress: Callable[[float, str], None]) -> Projection:
             cache = ProjectionCache(self.index_sha1, self._cache_root) if self._disk_cache else None
@@ -312,7 +351,22 @@ class Session:
                 progress=progress,
             )
 
-        return self.jobs.get_or_start(("projection", method.value, dims), work)
+        return self.jobs.get_or_start(key, work)
+
+    def _umap_cached(self, dims: int) -> bool:
+        if not self._disk_cache:
+            return False
+        cache = ProjectionCache(self.index_sha1, self._cache_root)
+        hit = cached_projection(
+            self.li,
+            self.source,
+            cache,
+            method=ProjectionMethod.UMAP,
+            dims=dims,
+            max_points=self.max_points,
+            assignments=self.assignments,
+        )
+        return hit is not None
 
     def place(self, proj: Projection, vector: npt.ArrayLike) -> npt.NDArray[np.float32]:
         """Coordinates of an input-space vector in a finished projection."""
@@ -399,6 +453,16 @@ class Session:
         if k < 1 or n_queries < 1:
             raise ValueError("k and n_queries must be >= 1.")
         p, vals = check_values(self.li, param, values)
+        if self.demo_limits is not None:
+            lim = self.demo_limits
+            if n_queries > lim.max_sweep_queries:
+                raise DemoLimitError(f"Sweeps use at most {lim.max_sweep_queries} queries here.")
+            if len(vals) > lim.max_sweep_values:
+                raise DemoLimitError(f"Sweeps try at most {lim.max_sweep_values} values here.")
+            if k > lim.max_sweep_k:
+                raise DemoLimitError(f"Sweeps use k <= {lim.max_sweep_k} here.")
+            if p is SweepParam.EF_SEARCH and max(vals) > lim.max_ef_search:
+                raise DemoLimitError(f"efSearch is capped at {lim.max_ef_search} in this demo.")
         key = ("sweep", p.value, tuple(vals), k, n_queries)
         job_id = hashlib.sha1(repr(key).encode()).hexdigest()[:12]
 

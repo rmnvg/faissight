@@ -242,7 +242,7 @@ export default function QueryExplorer({
                 />
               )}
             </label>
-            <NumberField label="k" value={k} onChange={setK} min={1} max={1000} />
+            <NumberField label="k" value={k} onChange={setK} min={1} max={info.demo_limits?.max_k ?? 1000} />
             {isIvf && (
               <label className="flex w-56 flex-col gap-1 text-xs text-ink-2">
                 <span>
@@ -258,7 +258,15 @@ export default function QueryExplorer({
                 />
               </label>
             )}
-            {isHnsw && <NumberField label="efSearch" value={efSearch} onChange={setEfSearch} min={1} max={4096} />}
+            {isHnsw && (
+              <NumberField
+                label="efSearch"
+                value={efSearch}
+                onChange={setEfSearch}
+                min={1}
+                max={info.demo_limits?.max_ef_search ?? 4096}
+              />
+            )}
             <label className="flex items-center gap-2 pb-2 text-sm text-ink-2">
               <input type="checkbox" checked={compare} onChange={(e) => setCompare(e.target.checked)} className="accent-series-1" />
               Compare with exact

@@ -174,6 +174,35 @@ def core_vectors(li: LoadedIndex, source: VectorSource, ids: npt.ArrayLike) -> F
     return li.to_core_space(x) if li.vector_transforms else x
 
 
+def _sample(
+    li: LoadedIndex,
+    source: VectorSource,
+    max_points: int,
+    seed: int,
+    assignments: Assignments | None,
+) -> tuple[IntArray | None, IntArray, IntArray, FloatArray]:
+    list_nos_all = assignments.lookup(source.ids) if assignments is not None else None
+    rows = stratified_sample(len(source), max_points, list_nos_all, seed)
+    ids = source.ids[rows]
+    return list_nos_all, rows, ids, core_vectors(li, source, ids)
+
+
+def cached_projection(
+    li: LoadedIndex,
+    source: VectorSource,
+    cache: ProjectionCache,
+    *,
+    method: ProjectionMethod | str,
+    dims: int,
+    max_points: int = DEFAULT_MAX_POINTS,
+    seed: int = DEFAULT_SEED,
+    assignments: Assignments | None = None,
+) -> Projection | None:
+    """The projection ``compute_projection`` would load from ``cache``, without computing."""
+    *_, x = _sample(li, source, max_points, seed, assignments)
+    return cache.load(cache.key(ProjectionMethod(method), dims, max_points, seed, x))
+
+
 def compute_projection(
     li: LoadedIndex,
     source: VectorSource,
@@ -197,10 +226,7 @@ def compute_projection(
     report = progress or (lambda frac, msg: None)
 
     report(0.0, "Sampling points")
-    list_nos_all = assignments.lookup(source.ids) if assignments is not None else None
-    rows = stratified_sample(len(source), max_points, list_nos_all, seed)
-    ids = source.ids[rows]
-    x = core_vectors(li, source, ids)
+    list_nos_all, rows, ids, x = _sample(li, source, max_points, seed, assignments)
 
     key = None
     if cache is not None:

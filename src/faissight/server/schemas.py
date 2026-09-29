@@ -41,6 +41,15 @@ class SweepDefaults(BaseModel):
     """Largest accepted value (nlist for nprobe; None when unbounded)."""
 
 
+class DemoLimitsOut(BaseModel):
+    max_k: int
+    max_ef_search: int
+    max_sweep_queries: int
+    max_sweep_values: int
+    max_sweep_k: int
+    umap_from_cache_only: bool
+
+
 class InfoResponse(BaseModel):
     version: str
     name: str
@@ -61,6 +70,8 @@ class InfoResponse(BaseModel):
     ground_truth_source: Literal["raw", "reconstructed"] | None
     max_points: int
     sweep: SweepDefaults | None
+    demo_limits: DemoLimitsOut | None = None
+    """Set when the server runs in read-only demo mode."""
     inputs: InputsOut
 
 

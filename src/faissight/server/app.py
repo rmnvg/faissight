@@ -15,7 +15,7 @@ from faissight.core.ivf import NotAnIVFIndexError
 from faissight.core.projection import ProjectionUnavailableError
 from faissight.core.search import QueryError
 from faissight.server.routes import ApiError, router
-from faissight.session import InputError, Session
+from faissight.session import DemoLimitError, InputError, Session
 
 STATIC_DIR = Path(__file__).resolve().parent.parent / "static"
 log = logging.getLogger("faissight")
@@ -78,6 +78,10 @@ def _install_error_handlers(app: FastAPI) -> None:
             return _error(status, code, str(e), hint)
 
         app.add_exception_handler(exc_type, handler)
+
+    @app.exception_handler(DemoLimitError)
+    async def demo_limit(_: Request, e: DemoLimitError) -> JSONResponse:
+        return _error(403, "DEMO_LIMIT", str(e), e.hint)
 
     @app.exception_handler(InputError)
     async def input_error(_: Request, e: InputError) -> JSONResponse:
