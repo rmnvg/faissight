@@ -9,6 +9,8 @@ export default defineConfig({
   build: {
     outDir: '../src/faissight/static',
     emptyOutDir: true,
+    // deck.gl (lazy map chunk) and recharts (overview) are each ~550 kB minified, ~170 kB gzip.
+    chunkSizeWarningLimit: 700,
   },
   server: {
     // `npm run dev` talks to a running `faissight serve` on the default port.
