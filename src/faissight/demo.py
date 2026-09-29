@@ -18,6 +18,7 @@ from pathlib import Path
 from typing import Any
 
 import numpy as np
+import numpy.typing as npt
 
 DATASET = "neural-bridge/rag-dataset-12000"
 BASE = f"https://huggingface.co/datasets/{DATASET}/resolve/main/data/"
@@ -100,7 +101,7 @@ def chunk(passages: list[str], max_chunks: int) -> list[dict[str, object]]:
     return chunks
 
 
-def embed(texts: list[str], batch_size: int = 256) -> np.ndarray:
+def embed(texts: list[str], batch_size: int = 256) -> npt.NDArray[np.float32]:
     from sentence_transformers import SentenceTransformer
 
     model = SentenceTransformer(MODEL)
@@ -114,7 +115,7 @@ def embed(texts: list[str], batch_size: int = 256) -> np.ndarray:
     return np.ascontiguousarray(vecs, dtype=np.float32)
 
 
-def build_indexes(x: np.ndarray, nlist: int, pq_m: int, hnsw_m: int) -> dict[str, Any]:
+def build_indexes(x: npt.NDArray[np.float32], nlist: int, pq_m: int, hnsw_m: int) -> dict[str, Any]:
     from faissight.core._faiss import import_faiss
 
     faiss = import_faiss()
