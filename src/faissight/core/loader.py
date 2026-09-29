@@ -7,6 +7,7 @@ from pathlib import Path
 from typing import Any
 
 import numpy as np
+import numpy.typing as npt
 
 from faissight.core._faiss import class_name, import_faiss
 from faissight.core.types import IndexKind, IndexParams, LoadedIndex, Metric, TransformInfo
@@ -85,13 +86,13 @@ def _read(path: Path) -> Any:
 
 def _unwrap(
     root: Any,
-) -> tuple[Any, list[str], list[TransformInfo], np.ndarray | None, bool]:
+) -> tuple[Any, list[str], list[TransformInfo], npt.NDArray[np.int64] | None, bool]:
     """Walk PreTransform / IDMap / Refine wrappers down to the core index."""
     faiss = import_faiss()
     cur = root
     chain: list[str] = []
     transforms: list[TransformInfo] = []
-    ids: np.ndarray | None = None
+    ids: npt.NDArray[np.int64] | None = None
     has_refine = False
     while True:
         chain.append(class_name(cur))
