@@ -15,3 +15,6 @@ One line per non-obvious technical decision.
 - IVF core is found by unwrapping PreTransform/IDMap/Refine ourselves and checking `isinstance(core, IndexIVF)`, not `extract_index_ivf`, so `kind`, `core` and `ivf` always agree.
 - `d` is the input dimension (what queries use); `core_d` is the dimension after any PreTransform (what centroids/codes use).
 - Binary, GPU, FastScan, non-L2/IP metrics and other exotic indexes load as `UNSUPPORTED` with a reason instead of raising.
+- IVF centroids of a PreTransform index are returned in the transformed space (`core_d`); anything comparing them to raw vectors must apply the transform first.
+- `list_members`/`assignments` read ids via `invlists.get_ids` directly instead of `inspect_tools.get_invlist`, which also copies every list's codes.
+- `imbalance_factor` returns 0.0 for an empty index (FAISS returns NaN, which isn't valid JSON).
