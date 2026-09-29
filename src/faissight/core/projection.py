@@ -130,7 +130,7 @@ def stratified_sample(
                 if room[gi] > 0:
                     quota[gi] += 1
                     short -= 1
-        quota = np.minimum(quota, sizes)
+        np.minimum(quota, sizes, out=quota)
 
     order = np.argsort(inverse, kind="stable")
     starts = np.concatenate([[0], np.cumsum(sizes)[:-1]])
