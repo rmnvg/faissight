@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 import time
+from collections.abc import Callable
 from dataclasses import dataclass, field
+from enum import Enum
 from typing import Any
 
 import numpy as np
@@ -164,3 +166,75 @@ def recall_at_k(found: npt.ArrayLike, truth: npt.ArrayLike) -> float:
     if len(truth_ids) == 0:
         return 1.0
     return float(np.isin(truth_ids, np.asarray(found, dtype=np.int64)).mean())
+
+
+Embedder = Callable[[str], npt.ArrayLike]
+"""Turns query text into a vector of the index's input dimension."""
+
+
+class QueryError(ValueError):
+    """The query can't be resolved to a vector."""
+
+
+class QueryKind(str, Enum):
+    ID = "id"
+    VECTOR = "vector"
+    TEXT = "text"
+
+
+@dataclass(frozen=True)
+class ResolvedQuery:
+    """A query turned into an input-space vector.
+
+    ``exclude_id`` is set for queries by stored id, so the vector doesn't find itself.
+    """
+
+    vector: FloatArray
+    kind: QueryKind
+    exclude_id: int | None = None
+    text: str | None = None
+
+
+def resolve_query(
+    li: LoadedIndex,
+    *,
+    id: int | None = None,
+    vector: npt.ArrayLike | None = None,
+    text: str | None = None,
+    source: VectorSource | None = None,
+    embedder: Embedder | None = None,
+) -> ResolvedQuery:
+    """Resolve exactly one of ``id`` (needs ``source``), ``vector`` or ``text`` (needs
+    ``embedder``) to a query vector of dimension ``li.d``."""
+    given = [name for name, v in (("id", id), ("vector", vector), ("text", text)) if v is not None]
+    if len(given) != 1:
+        raise QueryError(f"Give exactly one of id, vector or text (got {given or 'none'}).")
+
+    if id is not None:
+        if source is None:
+            raise QueryError("Querying by id needs stored vectors (raw or reconstructed).")
+        try:
+            vec = source.get([id])[0]
+        except KeyError:
+            raise QueryError(f"Id {id} is not in the index.") from None
+        return ResolvedQuery(vec, QueryKind.ID, exclude_id=int(id))
+
+    if vector is not None:
+        return ResolvedQuery(_check_dim(vector, li.d, "Query vector"), QueryKind.VECTOR)
+
+    assert text is not None
+    if embedder is None:
+        raise QueryError("Text queries need an embedder (e.g. --embedder all-MiniLM-L6-v2).")
+    vec = _check_dim(embedder(text), li.d, "Embedder output")
+    return ResolvedQuery(vec, QueryKind.TEXT, text=text)
+
+
+def _check_dim(v: npt.ArrayLike, d: int, what: str) -> FloatArray:
+    arr = np.asarray(v, dtype=np.float32)
+    if arr.ndim == 2 and arr.shape[0] == 1:
+        arr = arr[0]
+    if arr.ndim != 1 or arr.shape[0] != d:
+        raise QueryError(f"{what} has shape {arr.shape}, the index expects ({d},).")
+    if not np.isfinite(arr).all():
+        raise QueryError(f"{what} contains NaN or infinite values.")
+    return arr

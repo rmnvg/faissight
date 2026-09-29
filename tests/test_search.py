@@ -195,3 +195,64 @@ def test_ground_truth_on_reconstructed(synthetic) -> None:
 )
 def test_recall_at_k(found, truth, expected) -> None:
     assert S.recall_at_k(found, truth) == pytest.approx(expected)
+
+
+# --- query resolution ----------------------------------------------------------
+
+
+def test_resolve_by_id(synthetic, data) -> None:
+    li = load_index(synthetic["idmap_flat"])
+    src = V.from_arrays(li, data["x"], data["ids_idmap"])
+    uid = int(data["ids_idmap"][9])
+    q = S.resolve_query(li, id=uid, source=src)
+    assert q.kind is S.QueryKind.ID
+    assert q.exclude_id == uid
+    np.testing.assert_array_equal(q.vector, data["x"][9])
+    # Self-exclusion end to end: the query's own id never comes back.
+    assert uid not in S.search(li, q.vector, 10, exclude_id=q.exclude_id).ids
+
+
+def test_resolve_by_vector(synthetic, data) -> None:
+    li = load_index(synthetic["flat_l2"])
+    q = S.resolve_query(li, vector=data["queries"][0].tolist())
+    assert q.kind is S.QueryKind.VECTOR
+    assert q.exclude_id is None
+    assert q.vector.dtype == np.float32
+    assert S.resolve_query(li, vector=data["queries"][:1]).vector.shape == (D,)
+
+
+def test_resolve_by_text(synthetic) -> None:
+    li = load_index(synthetic["flat_l2"])
+    calls = []
+
+    def embed(text: str) -> np.ndarray:
+        calls.append(text)
+        return np.ones(D)
+
+    q = S.resolve_query(li, text="hello", embedder=embed)
+    assert q.kind is S.QueryKind.TEXT
+    assert q.text == "hello"
+    assert calls == ["hello"]
+
+
+@pytest.mark.parametrize(
+    ("kwargs", "match"),
+    [
+        ({}, "exactly one"),
+        ({"id": 1, "vector": np.zeros(D)}, "exactly one"),
+        ({"id": 1}, "needs stored vectors"),
+        ({"vector": np.zeros(D + 1)}, "expects"),
+        ({"vector": np.full(D, np.nan)}, "NaN"),
+        ({"text": "hi"}, "embedder"),
+        ({"text": "hi", "embedder": lambda t: np.zeros(3)}, "Embedder output"),
+    ],
+)
+def test_resolve_errors(synthetic, kwargs, match) -> None:
+    with pytest.raises(S.QueryError, match=match):
+        S.resolve_query(load_index(synthetic["flat_l2"]), **kwargs)
+
+
+def test_resolve_unknown_id(synthetic, data) -> None:
+    li = load_index(synthetic["flat_l2"])
+    with pytest.raises(S.QueryError, match="not in the index"):
+        S.resolve_query(li, id=N + 5, source=V.from_arrays(li, data["x"]))
