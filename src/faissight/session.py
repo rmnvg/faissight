@@ -7,6 +7,7 @@ import hashlib
 import importlib.util
 import os
 import threading
+from collections import OrderedDict
 from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
@@ -62,6 +63,7 @@ from faissight.core.vectors import (
 
 T = TypeVar("T")
 ArrayInput = str | os.PathLike[str] | npt.ArrayLike
+_SWEEP_CACHE_BYTES = 64 * 1024 * 1024
 
 
 class InputError(ValueError):
@@ -140,6 +142,9 @@ class Session:
         self._disk_cache = disk_cache
         self._lock = threading.RLock()
         self._lazy: dict[str, Any] = {}
+        self._sweep_inputs: OrderedDict[
+            tuple[int, int, int], tuple[QuerySet, npt.NDArray[np.int64]]
+        ] = OrderedDict()
         self._key_locks: dict[str, threading.RLock] = {}
 
         self._raw: VectorSource | None = None
@@ -156,13 +161,19 @@ class Session:
         self.queries: np.ndarray[Any, Any] | None = None
         if queries is not None:
             q = _load_array(queries, "queries")
-            if q.ndim != 2 or q.shape[1] != self.li.d:
+            if q.ndim != 2 or q.shape[1] != self.li.d or len(q) == 0:
                 raise InputError(
                     "QUERY_MISMATCH",
                     f"Queries have shape {q.shape}, the index expects (n, {self.li.d}).",
                     "Pass query vectors with the index's input dimension.",
                 )
             self.queries = np.ascontiguousarray(q, dtype=np.float32)
+            if not np.isfinite(self.queries).all():
+                raise InputError(
+                    "QUERY_MISMATCH",
+                    "Queries contain NaN or infinite values.",
+                    "Pass finite query vectors.",
+                )
 
         try:
             self.metadata: Metadata | None = (
@@ -432,13 +443,42 @@ class Session:
 
     # --- sweeps ---------------------------------------------------------------------------
 
-    def sweep_queries(self, n_queries: int = DEFAULT_N_QUERIES) -> QuerySet:
+    def sweep_queries(self, n_queries: int = DEFAULT_N_QUERIES, seed: int = 0) -> QuerySet:
         """The ``--queries`` set (first ``n_queries``) or ``n_queries`` sampled stored vectors."""
         if self.queries is not None:
             return given_queries(self.li, self.queries[:n_queries])
-        return self._once(
-            f"sweep_queries:{n_queries}", lambda: sample_queries(self.source, n_queries)
-        )
+        return sample_queries(self.source, n_queries, seed)
+
+    def _sweep_data(
+        self, n_queries: int, k: int, seed: int
+    ) -> tuple[QuerySet, npt.NDArray[np.int64]]:
+        key = (n_queries, k, seed)
+        with self._lock:
+            if key in self._sweep_inputs:
+                self._sweep_inputs.move_to_end(key)
+                return self._sweep_inputs[key]
+        qs = self.sweep_queries(n_queries, seed)
+        truth = ground_truth_ids(self.ground_truth, qs, k)
+
+        def size(data: tuple[QuerySet, npt.NDArray[np.int64]]) -> int:
+            q, t = data
+            return (
+                q.vectors.nbytes
+                + t.nbytes
+                + (q.exclude_ids.nbytes if q.exclude_ids is not None else 0)
+            )
+
+        data = (qs, truth)
+        if size(data) <= _SWEEP_CACHE_BYTES:
+            with self._lock:
+                self._sweep_inputs[key] = data
+                self._sweep_inputs.move_to_end(key)
+                while (
+                    len(self._sweep_inputs) > 4
+                    or sum(map(size, self._sweep_inputs.values())) > _SWEEP_CACHE_BYTES
+                ):
+                    self._sweep_inputs.popitem(last=False)
+        return data
 
     def sweep_job(
         self,
@@ -446,15 +486,21 @@ class Session:
         values: list[int] | None = None,
         k: int = 10,
         n_queries: int = DEFAULT_N_QUERIES,
+        repeats: int = 3,
+        seed: int = 0,
     ) -> tuple[str, Job[SweepResult]]:
         """Validate, then start (or return) the background sweep. Returns ``(job_id, job)``."""
         if not self.li.is_supported:
             raise ValueError(f"Cannot sweep: {self.li.unsupported_reason}")
         if k < 1 or n_queries < 1:
             raise ValueError("k and n_queries must be >= 1.")
+        if not 1 <= repeats <= 20 or not 0 <= seed <= 2**32 - 1:
+            raise ValueError("repeats must be 1-20 and seed must be 0-4294967295.")
         p, vals = check_values(self.li, param, values)
         if self.demo_limits is not None:
             lim = self.demo_limits
+            if repeats > 3:
+                raise DemoLimitError("Sweeps use at most 3 repeats here.")
             if n_queries > lim.max_sweep_queries:
                 raise DemoLimitError(f"Sweeps use at most {lim.max_sweep_queries} queries here.")
             if len(vals) > lim.max_sweep_values:
@@ -463,16 +509,12 @@ class Session:
                 raise DemoLimitError(f"Sweeps use k <= {lim.max_sweep_k} here.")
             if p is SweepParam.EF_SEARCH and max(vals) > lim.max_ef_search:
                 raise DemoLimitError(f"efSearch is capped at {lim.max_ef_search} in this demo.")
-        key = ("sweep", p.value, tuple(vals), k, n_queries)
+        key = ("sweep", p.value, tuple(vals), k, n_queries, repeats, seed)
         job_id = hashlib.sha1(repr(key).encode()).hexdigest()[:12]
 
         def work(progress: Callable[[float, str], None]) -> SweepResult:
             progress(0.0, "Computing exact ground truth")
-            qs = self.sweep_queries(n_queries)
-            truth = self._once(
-                f"sweep_truth:{qs.origin}:{len(qs)}:{k}",
-                lambda: ground_truth_ids(self.ground_truth, qs, k),
-            )
+            qs, truth = self._sweep_data(n_queries, k, seed)
             return sweep(
                 self.li,
                 qs,
@@ -482,11 +524,18 @@ class Session:
                 k=k,
                 truth_reconstructed=not self.has_raw_vectors,
                 progress=progress,
+                repeats=repeats,
+                seed=seed,
             )
 
+        job = self.jobs.get_or_start(key, work)
         with self._lock:
-            self._lazy.setdefault("sweep_ids", {})[job_id] = key
-        return job_id, self.jobs.get_or_start(key, work)
+            mappings = self._lazy.setdefault("sweep_ids", {})
+            for old_id, old_key in list(mappings.items()):
+                if self.jobs.get(old_key) is None:
+                    del mappings[old_id]
+            mappings[job_id] = key
+        return job_id, job
 
     def get_sweep_job(self, job_id: str) -> Job[SweepResult] | None:
         with self._lock:

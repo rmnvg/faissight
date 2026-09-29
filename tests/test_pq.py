@@ -117,6 +117,6 @@ def test_requires_raw_vectors(synthetic) -> None:
 
 def test_mismatched_ids(synthetic, x) -> None:
     li = load_index(synthetic["ivf_flat"])
-    raw = V.from_arrays(li, x, np.arange(N) + 1)
+    raw = V.VectorSource(x, np.arange(N, dtype=np.int64) + 1, False)
     with pytest.raises(ValueError, match="same ids"):
         P.reconstruction_errors(raw, V.reconstruct_all(li))

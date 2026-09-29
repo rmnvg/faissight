@@ -1,3 +1,5 @@
+import { parseId } from '../lib/ids'
+import type { UserId } from '../api/types'
 import { COORDINATE_SYSTEM, OrbitView, type Layer, type OrbitViewState } from '@deck.gl/core'
 import { LineLayer, PathLayer, ScatterplotLayer, TextLayer } from '@deck.gl/layers'
 import DeckGL from '@deck.gl/react'
@@ -29,19 +31,19 @@ export default function Hnsw({
   mode: ThemeMode
 }) {
   const stats = useQuery({ queryKey: ['hnsw-stats'], queryFn: api.hnswStats, staleTime: Infinity })
-  const urlId = intParam(params, 'id')
+  const urlId = parseId(params.get('id'))
   const [idInput, setIdInput] = useState(urlId !== null ? String(urlId) : '')
   const [k, setK] = useState(10)
   const [ef, setEf] = useState(intParam(params, 'ef') ?? Number(info.params.ef_search ?? 16))
   const [formError, setFormError] = useState<string | null>(null)
 
   const trace = useMutation({
-    mutationFn: (req: { id: number; k: number; ef: number }) =>
+    mutationFn: (req: { id: UserId; k: number; ef: number }) =>
       api.traceHnsw({ query: { id: req.id }, k: req.k, efSearch: req.ef, compare: true }),
   })
 
-  const run = (id: number) => trace.mutate({ id, k, ef })
-  const autoRan = useRef<number | null>(null)
+  const run = (id: UserId) => trace.mutate({ id, k, ef })
+  const autoRan = useRef<UserId | null>(null)
   useEffect(() => {
     if (urlId === null || autoRan.current === urlId) return
     autoRan.current = urlId
@@ -51,8 +53,8 @@ export default function Hnsw({
 
   const submit = (e: FormEvent) => {
     e.preventDefault()
-    const id = Number(idInput)
-    if (!idInput.trim() || !Number.isInteger(id)) {
+    const id = parseId(idInput)
+    if (id === null) {
       setFormError('Enter an integer id of a stored vector.')
       return
     }
@@ -171,7 +173,7 @@ function Scene({ stats, trace, mode }: { stats: HnswStats; trace: HnswTrace | nu
 
   // Position of every node we know about: graph samples plus every node in the trace.
   const pos = useMemo(() => {
-    const m = new Map<number, XY>()
+    const m = new Map<UserId, XY>()
     for (const g of graphData) g.ids.forEach((id, i) => m.set(id, [g.x[i], g.y[i]]))
     if (trace) trace.nodes.ids.forEach((id, i) => m.set(id, [trace.nodes.x[i], trace.nodes.y[i]]))
     return m
@@ -226,7 +228,7 @@ function Scene({ stats, trace, mode }: { stats: HnswStats; trace: HnswTrace | nu
   // Bounds of everything the level-0 search touched, for the close-up camera.
   const level0Box = useMemo(() => {
     if (!trace) return null
-    const ids = new Set<number>()
+    const ids = new Set<UserId>()
     for (const l of trace.levels.filter((l) => l.level === 0))
       for (const st of l.steps) {
         ids.add(st.expanded)
@@ -285,7 +287,7 @@ function Scene({ stats, trace, mode }: { stats: HnswStats; trace: HnswTrace | nu
   const viewState = userView && userView.key === fitKey ? userView.vs : fitted
 
   const z = (level: number) => (geom ? level * geom.gap : 0)
-  const at = (id: number, level: number): [number, number, number] | null => {
+  const at = (id: UserId, level: number): [number, number, number] | null => {
     const p = pos.get(id)
     return p ? [p[0], p[1], z(level)] : null
   }
@@ -364,7 +366,7 @@ function Scene({ stats, trace, mode }: { stats: HnswStats; trace: HnswTrace | nu
     const coord = { coordinateSystem: COORDINATE_SYSTEM.CARTESIAN }
     const onTop = { ...coord, parameters: { depthCompare: 'always' as const } }
     const lvl = state.frame.level
-    const dot = (id: number, level: number, color: RGBA, radius: number) => {
+    const dot = (id: UserId, level: number, color: RGBA, radius: number) => {
       const p = at(id, level)
       return p ? [{ p, color, radius }] : []
     }

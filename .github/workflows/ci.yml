@@ -4,9 +4,10 @@ on:
   push:
     branches: [main]
   pull_request:
+  workflow_call:
 
 concurrency:
-  group: ${{ github.workflow }}-${{ github.ref }}
+  group: checks-${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
 jobs:
@@ -72,6 +73,11 @@ jobs:
       - run: uv build
       - name: Wheel contains the built UI
         run: unzip -l dist/*.whl | grep -q "faissight/static/index.html"
+      - name: Test installed wheel in an isolated environment
+        run: |
+          uv venv "$RUNNER_TEMP/wheel-smoke"
+          uv pip install --python "$RUNNER_TEMP/wheel-smoke/bin/python" dist/*.whl faiss-cpu httpx
+          "$RUNNER_TEMP/wheel-smoke/bin/python" -I tests/package_smoke.py
 
   e2e:
     name: Browser smoke test

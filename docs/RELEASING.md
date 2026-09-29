@@ -21,8 +21,11 @@ No API tokens are stored anywhere: the workflow authenticates to PyPI with OIDC.
    git push origin main vX.Y.Z
    ```
 
-3. `release.yml` builds the UI, the sdist and the wheel, checks the tag matches the version,
-   publishes to PyPI and creates a GitHub release with the changelog section as notes.
+3. `release.yml` runs the reusable CI workflow against the tagged commit (Python checks,
+   frontend checks, browser tests and an installed-wheel smoke test). It then builds the UI,
+   sdist and release wheel, checks the tag matches the version, and installs the release
+   wheel in a fresh environment to verify its UI, API and CLI. Publishing to PyPI and the
+   GitHub release both depend on these checks succeeding.
 
 ## Hugging Face Space
 

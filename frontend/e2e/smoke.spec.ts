@@ -49,3 +49,37 @@ test('quantization: analysis loads with error, compression and distortion', asyn
   const worst = page.locator('section', { hasText: 'Worst-reconstructed vectors' }).locator('tbody tr')
   await expect(worst).toHaveCount(50)
 })
+
+test('large int64 ids survive searches, result links, reloads and HNSW traces', async ({ page }) => {
+  const id = '9007199254740993'
+  await page.goto('http://127.0.0.1:8797/#/query')
+  await page.getByRole('radio', { name: 'Stored id' }).click()
+  await page.getByPlaceholder('e.g. 42').fill(id)
+  const searched = page.waitForResponse((r) => r.url().endsWith('/api/search') && r.request().method() === 'POST')
+  await page.getByRole('button', { name: 'Search', exact: true }).click()
+  const response = await searched
+  expect(response.request().postDataJSON().query.id).toBe(id)
+  const body = await response.json()
+  expect(body.results).toHaveLength(10)
+  expect(body.results.every((r: { id: unknown }) => typeof r.id === 'string')).toBe(true)
+  await expect(page.getByText('Recall@10')).toBeVisible()
+  expect(page.url()).toContain(`id=${id}`)
+
+  const next = body.results[0].id
+  const rows = page.locator('section', { hasText: 'Approximate results' })
+  const linked = page.waitForResponse((r) => r.url().endsWith('/api/search') && r.request().postDataJSON()?.query.id === next)
+  await rows.getByRole('button', { name: next, exact: true }).click()
+  await linked
+  const reloaded = page.waitForResponse((r) => r.url().endsWith('/api/search'))
+  await page.reload()
+  expect((await reloaded).request().postDataJSON().query.id).toBe(next)
+
+  const traced = page.waitForResponse((r) => r.url().endsWith('/api/trace/hnsw'))
+  await page.goto(`http://127.0.0.1:8797/#/hnsw?id=${id}&ef=16`)
+  const traceResponse = await traced
+  expect(traceResponse.request().postDataJSON().query.id).toBe(id)
+  const trace = await traceResponse.json()
+  expect(trace.nodes.ids.every((v: unknown) => typeof v === 'string')).toBe(true)
+  await expect(page.getByText('Reconstructed trace.')).toBeVisible()
+  await expect(page.getByRole('button', { name: 'Next step' })).toBeVisible()
+})

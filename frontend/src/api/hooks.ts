@@ -1,3 +1,4 @@
+import type { UserId } from './types'
 import { useQuery } from '@tanstack/react-query'
 import { api } from './client'
 import type { Dims, Projection, ProjectionMethod } from './types'
@@ -46,7 +47,7 @@ export function isReady(p: { status: string } | undefined): p is Projection {
   return p?.status === 'done'
 }
 
-export function useMetadata(id: number | null, enabled: boolean) {
+export function useMetadata(id: UserId | null, enabled: boolean) {
   return useQuery({
     queryKey: ['metadata', id],
     queryFn: () => api.metadata(id as number),

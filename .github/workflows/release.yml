@@ -8,7 +8,12 @@ permissions:
   contents: read
 
 jobs:
+  checks:
+    name: Validate tagged commit
+    uses: ./.github/workflows/ci.yml
+
   build:
+    needs: checks
     name: Build sdist and wheel
     runs-on: ubuntu-latest
     steps:
@@ -36,6 +41,11 @@ jobs:
         run: |
           unzip -l dist/*.whl | grep -q "faissight/static/index.html"
           tar tzf dist/*.tar.gz | grep -q "src/faissight/static/index.html"
+      - name: Test release wheel in an isolated environment
+        run: |
+          uv venv "$RUNNER_TEMP/release-smoke"
+          uv pip install --python "$RUNNER_TEMP/release-smoke/bin/python" dist/*.whl faiss-cpu httpx
+          "$RUNNER_TEMP/release-smoke/bin/python" -I tests/package_smoke.py
       - uses: actions/upload-artifact@v4
         with:
           name: dist

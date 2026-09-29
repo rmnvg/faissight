@@ -1,3 +1,4 @@
+import { parseId } from '../lib/ids'
 import { useMutation } from '@tanstack/react-query'
 import { useEffect, useMemo, useRef, useState, type FormEvent } from 'react'
 import {
@@ -53,7 +54,7 @@ export default function QueryExplorer({
   const hasEmbedder = info.inputs.embedder !== null
   const embedderReady = info.inputs.embedder_status === 'ready'
 
-  const urlId = intParam(params, 'id')
+  const urlId = parseId(params.get('id'))
   const [queryMode, setQueryMode] = useState<QueryMode>(
     urlId !== null ? 'id' : hasEmbedder ? 'text' : 'id',
   )
@@ -83,8 +84,8 @@ export default function QueryExplorer({
       if (!text.trim()) return fail('Type some query text.')
       query = { text: text.trim() }
     } else if (queryMode === 'id') {
-      const id = Number(idInput)
-      if (!idInput.trim() || !Number.isInteger(id)) return fail('Enter an integer id.')
+      const id = parseId(idInput)
+      if (id === null) return fail('Enter an integer id.')
       query = { id }
     } else {
       const nums = vectorInput

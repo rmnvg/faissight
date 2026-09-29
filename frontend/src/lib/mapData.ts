@@ -1,3 +1,4 @@
+import type { UserId } from '../api/types'
 import { useMemo } from 'react'
 import { isReady, useProjection } from '../api/hooks'
 import type { Dims, JobStatus, Projection, ProjectionMethod } from '../api/types'
@@ -9,7 +10,7 @@ export interface MapData {
   positions: Float32Array
   centroidPositions: Float32Array | null
   /** Projection row of each point id. */
-  indexOf: Map<number, number>
+  indexOf: Map<UserId, number>
 }
 
 /** Load a projection (points + IVF centroids); `status` reports progress while computing. */
@@ -22,7 +23,7 @@ export function useMapData(method: ProjectionMethod, dims: Dims, isIvf: boolean)
     if (isIvf && !isReady(cents.data)) return null
     const points = pts.data
     const centroids = isIvf && isReady(cents.data) ? cents.data : null
-    const indexOf = new Map<number, number>()
+    const indexOf = new Map<UserId, number>()
     points.ids.forEach((id, i) => indexOf.set(id, i))
     return {
       points,

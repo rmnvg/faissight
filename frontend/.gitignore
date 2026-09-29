@@ -27,3 +27,5 @@ dist-ssr
 e2e/.data/
 test-results/
 playwright-report/
+
+e2e/.data-large/

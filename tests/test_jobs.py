@@ -6,7 +6,7 @@ import pytest
 from faissight.core import ivf
 from faissight.core import projection as P
 from faissight.core import vectors as V
-from faissight.core.jobs import JobRunner, JobStatus
+from faissight.core.jobs import JobCancelledError, JobCapacityError, JobRunner, JobStatus
 from faissight.core.loader import load_index
 
 
@@ -117,3 +117,82 @@ def test_projection_as_background_job(synthetic) -> None:
 
 def test_run_sync_allows_none_result() -> None:
     assert JobRunner().run_sync("n", lambda p: None) is None
+
+
+def test_queue_capacity_cancel_and_retry() -> None:
+    release = threading.Event()
+    started = threading.Event()
+    calls = []
+
+    def work(progress):
+        started.set()
+        release.wait(5)
+        progress(0.5, "checkpoint")
+        return 1
+
+    runner = JobRunner(max_workers=1, max_pending=1)
+    running = runner.get_or_start("running", work)
+    assert started.wait(5)
+    try:
+        queued = runner.get_or_start("queued", lambda p: calls.append(1))
+        assert runner.get_or_start("queued", work) is queued
+        with pytest.raises(JobCapacityError, match="queue is full"):
+            runner.get_or_start("overflow", work)
+        assert runner.cancel("queued")
+        assert queued.wait(1)
+        assert queued.status is JobStatus.CANCELLED
+        assert not calls
+        retry = runner.get_or_start("queued", lambda p: 7)
+        assert runner.cancel("running")
+    finally:
+        release.set()
+    assert running.wait(5)
+    assert running.status is JobStatus.CANCELLED
+    assert isinstance(running.error, JobCancelledError)
+    assert running.result is None
+    assert retry.wait(5)
+    assert retry.result == 7
+
+
+def test_completed_jobs_are_evicted_and_expire(monkeypatch) -> None:
+    runner = JobRunner(max_completed=2, ttl=10)
+    assert runner.run_sync("a", lambda p: 1) == 1
+    assert runner.run_sync("b", lambda p: 2) == 2
+    assert runner.get("a") is not None  # recently used results survive first
+    assert runner.run_sync("c", lambda p: 3) == 3
+    assert runner.get("b") is None
+    assert runner.get("a") is not None
+    future = runner.get("c").finished_at + 11
+    monkeypatch.setattr("faissight.core.jobs.time.monotonic", lambda: future)
+    assert runner.get("a") is None
+    assert runner.get("c") is None
+
+
+def test_close_cancels_work_and_rejects_new_jobs() -> None:
+    release = threading.Event()
+    runner = JobRunner(max_workers=1)
+    running = runner.get_or_start("a", lambda p: release.wait(5))
+    queued = runner.get_or_start("b", lambda p: 2)
+    try:
+        runner.close()
+        assert queued.wait(1)
+        assert queued.status is JobStatus.CANCELLED
+        with pytest.raises(JobCapacityError, match="stopped"):
+            runner.get_or_start("c", lambda p: 3)
+    finally:
+        release.set()
+    assert running.wait(5)
+    assert running.status is JobStatus.CANCELLED
+    assert not runner.cancel("a")
+    assert not runner.cancel("missing")
+
+
+def test_retried_job_is_retained_as_recent() -> None:
+    runner = JobRunner(max_completed=2)
+    with pytest.raises(ValueError, match="retry me"):
+        runner.run_sync("a", lambda p: (_ for _ in ()).throw(ValueError("retry me")))
+    runner.run_sync("b", lambda p: 2)
+    runner.run_sync("a", lambda p: 3)
+    runner.run_sync("c", lambda p: 4)
+    assert runner.get("a").result == 3
+    assert runner.get("b") is None

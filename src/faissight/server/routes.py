@@ -390,8 +390,9 @@ def _sweep_defaults(session: Session) -> S.SweepDefaults | None:
 
 
 def _sweep_response(job_id: str, job: Job[SweepResult], session: Session) -> JSONResponse:
+    snapshot = job.as_dict()
     result = None
-    if job.is_done and job.result is not None:
+    if snapshot["status"] == "done" and job.result is not None:
         r = job.result
         result = S.SweepResultOut(
             param=r.param.value,
@@ -409,9 +410,14 @@ def _sweep_response(job_id: str, job: Job[SweepResult], session: Session) -> JSO
                 for p in r.points
             ],
             pareto_values=[p.value for p in r.pareto()],
+            repeats=r.repeats,
+            seed=r.seed,
+            query_sha256=r.query_sha256,
+            environment=r.environment,
+            query_seed=r.query_seed,
         )
-    body = S.SweepJobResponse(job_id=job_id, result=result, **job.as_dict())
-    status = 200 if job.status is not JobStatus.RUNNING else 202
+    body = S.SweepJobResponse(job_id=job_id, result=result, **snapshot)
+    status = 202 if snapshot["status"] == "running" else 200
     return JSONResponse(status_code=status, content=body.model_dump())
 
 
@@ -422,7 +428,9 @@ def _sweep_response(job_id: str, job: Job[SweepResult], session: Session) -> JSO
 )
 def start_sweep(req: S.SweepRequest, session: SupportedDep) -> JSONResponse:
     """Start (or reuse) a background sweep; poll ``GET /sweep/{job_id}`` until done."""
-    job_id, job = session.sweep_job(req.param, req.values, req.k, req.n_queries)
+    job_id, job = session.sweep_job(
+        req.param, req.values, req.k, req.n_queries, req.repeats, req.seed
+    )
     return _sweep_response(job_id, job, session)
 
 
@@ -437,6 +445,16 @@ def get_sweep(job_id: str, session: SessionDep) -> JSONResponse:
         raise ApiError(
             404, "NOT_FOUND", f"No sweep with id {job_id}.", "Start one with POST /api/sweep."
         )
+    return _sweep_response(job_id, job, session)
+
+
+@router.delete("/sweep/{job_id}", response_model=S.SweepJobResponse)
+def cancel_sweep(job_id: str, session: SessionDep) -> JSONResponse:
+    """Cancel a queued sweep or stop a running sweep at its next progress checkpoint."""
+    job = session.get_sweep_job(job_id)
+    if job is None:
+        raise ApiError(404, "NOT_FOUND", f"No sweep with id {job_id}.")
+    session.jobs.cancel(job.key)
     return _sweep_response(job_id, job, session)
 
 
@@ -620,12 +638,12 @@ def trace_hnsw(req: S.SearchRequest, session: HnswDep) -> S.HnswTraceResponse:
         overlap_with_faiss=overlap,
         truth=truth_rows,
         recall=report.recall,
-        nodes={
-            "ids": [float(i) for i in uid(nodes).tolist()],
-            "x": _round(xy[:, 0]),
-            "y": _round(xy[:, 1]),
-            "top_levels": [float(v) for v in g.node_levels[nodes].tolist()],
-        },
+        nodes=S.HnswTraceNodes(
+            ids=uid(nodes).tolist(),
+            x=_round(xy[:, 0]),
+            y=_round(xy[:, 1]),
+            top_levels=g.node_levels[nodes].tolist(),
+        ),
         query_xy=_round(pca.transform(q_core)[0]) if pca is not None else None,
     )
 

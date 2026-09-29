@@ -1,5 +1,8 @@
 // Mirrors src/faissight/server/schemas.py.
 
+/** Small ids are numbers; larger int64 ids are lossless decimal strings. */
+export type UserId = number | string
+
 export type Metric = 'L2' | 'IP' | 'OTHER'
 export type IndexKind =
   | 'FLAT'
@@ -80,11 +83,11 @@ export interface ListMembers {
   size: number
   offset: number
   limit: number
-  members: { id: number; snippet: Snippet | null }[]
+  members: { id: UserId; snippet: Snippet | null }[]
 }
 
 export interface JobStatus {
-  status: 'running' | 'done' | 'failed'
+  status: 'running' | 'done' | 'failed' | 'cancelled'
   progress: number
   message: string
   error: string | null
@@ -95,7 +98,7 @@ export interface Projection {
   kind: 'points' | 'centroids'
   method: ProjectionMethod
   dims: Dims
-  ids: number[]
+  ids: UserId[]
   x: number[]
   y: number[]
   z: number[] | null
@@ -108,7 +111,7 @@ export interface Projection {
 export type ProjectionOrStatus = Projection | JobStatus
 
 export interface QueryIn {
-  id?: number
+  id?: UserId
   vector?: number[]
   text?: string
 }
@@ -124,7 +127,7 @@ export interface SearchRequest {
 
 export interface ResultRow {
   rank: number
-  id: number
+  id: UserId
   distance: number
   list_no: number | null
   in_truth: boolean | null
@@ -133,7 +136,7 @@ export interface ResultRow {
 
 export interface TruthRow {
   rank: number
-  id: number
+  id: UserId
   distance: number
   list_no: number | null
   probe_rank: number | null
@@ -179,7 +182,7 @@ export interface IvfTrace {
 }
 
 export interface MetadataRow {
-  id: number
+  id: UserId
   row: Record<string, unknown>
 }
 
@@ -200,11 +203,16 @@ export interface SweepResult {
   truth_source: 'raw' | 'reconstructed'
   points: SweepPoint[]
   pareto_values: number[]
+  repeats: number
+  seed: number
+  query_sha256: string
+  query_seed: number | null
+  environment: Record<string, string | number>
 }
 
 export interface SweepJob {
   job_id: string
-  status: 'running' | 'done' | 'failed'
+  status: 'running' | 'done' | 'failed' | 'cancelled'
   progress: number
   message: string
   error: string | null
@@ -216,6 +224,8 @@ export interface SweepRequest {
   values?: number[]
   k: number
   n_queries: number
+  repeats?: number
+  seed?: number
 }
 
 export interface HnswLevelStats {
@@ -229,7 +239,7 @@ export interface HnswLevelStats {
 }
 
 export interface HnswStats {
-  entry_point: number
+  entry_point: UserId
   max_level: number
   m: number
   ef_search: number
@@ -241,7 +251,7 @@ export interface HnswGraph {
   level: number
   n_level_nodes: number
   sampled: boolean
-  ids: number[]
+  ids: UserId[]
   x: number[]
   y: number[]
   top_levels: number[]
@@ -250,20 +260,20 @@ export interface HnswGraph {
 }
 
 export interface HnswVisit {
-  node: number
+  node: UserId
   distance: number
   accepted: boolean
 }
 
 export interface HnswStep {
-  expanded: number
+  expanded: UserId
   expanded_distance: number
   visits: HnswVisit[]
 }
 
 export interface HnswLevelTrace {
   level: number
-  entry: number
+  entry: UserId
   steps: HnswStep[]
 }
 
@@ -274,22 +284,22 @@ export interface HnswTrace {
   higher_is_closer: boolean
   ef_search: number
   k: number
-  entry_point: number
+  entry_point: UserId
   max_level: number
   levels: HnswLevelTrace[]
   results: ResultRow[]
-  faiss_ids: number[]
+  faiss_ids: UserId[]
   overlap_with_faiss: number
   truth: {
     rank: number
-    id: number
+    id: UserId
     distance: number
     outcome: HnswOutcome
     top_level: number
     snippet: Snippet | null
   }[] | null
   recall: number | null
-  nodes: { ids: number[]; x: number[]; y: number[]; top_levels: number[] }
+  nodes: { ids: UserId[]; x: number[]; y: number[]; top_levels: number[] }
   query_xy: number[] | null
 }
 
@@ -310,7 +320,7 @@ export interface PqError {
   relative_mean: number | null
   histogram: { edges: number[]; counts: number[] } | null
   per_list: { list_no: number; size: number; mean_error: number }[] | null
-  worst: { id: number; error: number; relative: number; list_no: number | null; snippet: Snippet | null }[] | null
+  worst: { id: UserId; error: number; relative: number; list_no: number | null; snippet: Snippet | null }[] | null
   distortion: {
     true: number[]
     approx: number[]

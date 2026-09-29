@@ -223,3 +223,39 @@ def test_tuner_snippet_parameter_space_works_through_wrappers(spec, param, read)
         index.add(x)
     faiss.ParameterSpace().set_index_parameter(index, param, 7)
     assert read(index) == 7
+
+
+def test_repeated_timings_and_provenance(ivf_setup, monkeypatch) -> None:
+    li, _, _, qs, truth = ivf_setup
+    original = li.index.search
+    calls = []
+
+    def record(q, k, **kwargs):
+        calls.append(len(q))
+        return original(q, k, **kwargs)
+
+    monkeypatch.setattr(li.index, "search", record)
+    result = W.sweep(li, qs, truth, values=[1, 2], k=K, repeats=4, seed=17)
+    assert calls.count(1) == 2 * len(qs) * 4
+    assert calls.count(len(qs)) == 2  # each setting gets a warmup
+    assert result.repeats == 4
+    assert result.seed == 17
+    assert result.query_seed == 0
+    assert result.query_sha256 == W.query_fingerprint(qs)
+    assert result.environment["threads"] == 1
+    assert result.environment["faiss"] == faiss.__version__
+
+
+def test_seed_changes_queries_and_fingerprint(ivf_setup) -> None:
+    _, source, _, _, _ = ivf_setup
+    a, b = W.sample_queries(source, 20, seed=1), W.sample_queries(source, 20, seed=2)
+    assert W.query_fingerprint(a) != W.query_fingerprint(b)
+    assert W.query_fingerprint(a) == W.query_fingerprint(W.sample_queries(source, 20, seed=1))
+    assert W.query_fingerprint(a) != W.query_fingerprint(W.QuerySet(a.vectors, None, "given"))
+
+
+@pytest.mark.parametrize("kwargs", [{"repeats": 0}, {"seed": -1}])
+def test_invalid_measurement_settings(ivf_setup, kwargs) -> None:
+    li, _, _, qs, truth = ivf_setup
+    with pytest.raises(ValueError, match="repeats"):
+        W.sweep(li, qs, truth, **kwargs)

@@ -23,8 +23,10 @@ def test_from_arrays_default_ids(synthetic, x) -> None:
 
 
 def test_from_arrays_sorts_by_id(synthetic, x) -> None:
-    li = load_index(synthetic["flat_l2"])
     ids = np.arange(N, dtype=np.int64)[::-1] * 2
+    index = faiss.IndexIDMap2(faiss.IndexFlatL2(D))
+    index.add_with_ids(x, ids)
+    li = load_index(index)
     src = V.from_arrays(li, x, ids)
     assert (np.diff(src.ids) > 0).all()
     np.testing.assert_array_equal(src.get([ids[3]]), x[[3]])
@@ -116,3 +118,36 @@ def test_from_arrays_does_not_copy_sorted_input(synthetic, x) -> None:
     shuffled = V.from_arrays(li, x, np.arange(N)[::-1].copy())
     assert not np.shares_memory(shuffled.vectors, x)
     np.testing.assert_array_equal(shuffled.get([0]), x[[N - 1]])  # id 0 is the last row
+
+
+@pytest.mark.parametrize("wrapped", [True, False])
+def test_raw_ids_must_match_index(wrapped) -> None:
+    x = np.random.default_rng(7).normal(size=(200, 8)).astype(np.float32)
+    ids = np.arange(len(x), dtype=np.int64) + 2**53 + 1
+    if wrapped:
+        index = faiss.IndexIDMap2(faiss.IndexFlatL2(8))
+    else:
+        index = faiss.IndexIVFFlat(faiss.IndexFlatL2(8), 8, 4)
+        index.train(x)
+    index.add_with_ids(x, ids)
+    li = load_index(index)
+    with pytest.raises(V.VectorMismatchError, match="do not match"):
+        V.from_arrays(li, x)
+    with pytest.raises(V.VectorMismatchError, match="do not match"):
+        V.from_arrays(li, x, ids + 1)
+    src = V.from_arrays(li, x[::-1], ids[::-1])
+    np.testing.assert_array_equal(src.get(ids), x)
+
+
+@pytest.mark.parametrize("bad", [float("nan"), float("inf"), -float("inf")])
+def test_nonfinite_raw_vectors_rejected(synthetic, x, bad) -> None:
+    broken = x.copy()
+    broken[-1, -1] = bad
+    with pytest.raises(V.VectorMismatchError, match="NaN or infinite"):
+        V.from_arrays(load_index(synthetic["flat_l2"]), broken)
+
+
+@pytest.mark.parametrize("dtype", [np.float64, np.bool_])
+def test_noninteger_ids_rejected(synthetic, x, dtype) -> None:
+    with pytest.raises(V.VectorMismatchError, match="must be integers"):
+        V.from_arrays(load_index(synthetic["flat_l2"]), x, np.arange(N).astype(dtype))
