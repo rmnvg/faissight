@@ -53,3 +53,5 @@ One line per non-obvious technical decision.
 - Tuner charts: recall, latency and recall-vs-latency are three separate single-axis charts (never dual-axis). The x-axis is log2 when values span 8x or more. Only the endpoints and the recommendation are direct-labelled; the table is the full text twin.
 - The "Apply it" snippet recommends `faiss.ParameterSpace().set_index_parameter`, verified (and tested) to work through IDMap, PreTransform and Refine wrappers and on HNSW.
 - Vitest (approved) covers the frontend's pure logic (`lib/*.test.ts`); CI runs typecheck, oxlint, Vitest and the build.
+- Playwright (approved) runs one smoke spec (overview, query explorer, tuner) against `faissight serve` on a 2k synthetic index, in its own CI job. Vitest is scoped to `src/**/*.test.ts` so it never picks up the Playwright specs.
+- `faissight serve`'s port pre-check sets `SO_REUSEADDR` like uvicorn: a just-closed port in TIME_WAIT counts as free, a live listener does not. Without it, quick restarts failed with "port in use".

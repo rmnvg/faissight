@@ -133,6 +133,8 @@ def info(
 
 def _port_available(host: str, port: int) -> bool:
     with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
+        # Like uvicorn: a recently closed port in TIME_WAIT is free, a live listener is not.
+        sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
         try:
             sock.bind((host, port))
         except OSError:
