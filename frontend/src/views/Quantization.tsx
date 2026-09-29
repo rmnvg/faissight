@@ -18,6 +18,7 @@ import { api } from '../api/client'
 import type { Info, PqError } from '../api/types'
 import { Banner, Card, EmptyState, Progress, Segmented, SnippetText, Spinner, StatTile } from '../components/ui'
 import { fmtNum } from '../lib/format'
+import { downloadCSV, downloadJSON } from '../lib/exportData'
 import { navigate } from '../lib/route'
 
 const AXIS = { fill: 'var(--muted)', fontSize: 11 }
@@ -323,7 +324,26 @@ function PerListChart({ perList }: { perList: NonNullable<PqError['per_list']> }
 function WorstTable({ data }: { data: PqError }) {
   const rows = data.worst ?? []
   return (
-    <Card title="Worst-reconstructed vectors" subtitle="The 50 stored vectors furthest from their raw version">
+    <Card
+      title="Worst-reconstructed vectors"
+      subtitle="The 50 stored vectors furthest from their raw version"
+      actions={
+        <div className="flex gap-2 print:hidden">
+          <button
+            className="rounded-md border border-line px-2.5 py-1 text-xs text-ink-2 hover:text-ink"
+            onClick={() => downloadCSV('faissight-quantization-worst.csv', rows as never)}
+          >
+            CSV
+          </button>
+          <button
+            className="rounded-md border border-line px-2.5 py-1 text-xs text-ink-2 hover:text-ink"
+            onClick={() => downloadJSON('faissight-quantization.json', data)}
+          >
+            JSON
+          </button>
+        </div>
+      }
+    >
       <div className="max-h-96 overflow-auto">
         <table className="w-full text-sm">
           <thead className="sticky top-0 bg-surface text-left text-xs text-muted">

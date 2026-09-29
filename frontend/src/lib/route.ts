@@ -25,10 +25,15 @@ export function useRoute(): Route {
   return route
 }
 
-export function navigate(view: View, params: Record<string, string | number | null> = {}) {
+/** Query string for route params, skipping null/empty values (same order as given). */
+export function toQueryString(params: Record<string, string | number | null>): string {
   const qs = new URLSearchParams()
   for (const [k, v] of Object.entries(params)) if (v !== null && v !== '') qs.set(k, String(v))
-  const s = qs.toString()
+  return qs.toString()
+}
+
+export function navigate(view: View, params: Record<string, string | number | null> = {}) {
+  const s = toQueryString(params)
   window.location.hash = `/${view}${s ? `?${s}` : ''}`
 }
 

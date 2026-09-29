@@ -18,6 +18,7 @@ import { api } from '../api/client'
 import { useSweep } from '../api/hooks'
 import type { Info, SweepParam, SweepPoint, SweepResult } from '../api/types'
 import { Banner, Card, EmptyState, Progress, StatTile } from '../components/ui'
+import { downloadCSV, downloadJSON } from '../lib/exportData'
 import { navigate } from '../lib/route'
 import { codeSnippet, parseValues, prefersLogAxis, recommend, speedup } from '../lib/tuner'
 
@@ -429,7 +430,26 @@ function Results({
       </div>
 
       <div className="grid gap-4 xl:grid-cols-5">
-        <Card className="xl:col-span-3" title="All measurements">
+        <Card
+          className="xl:col-span-3"
+          title="All measurements"
+          actions={
+            <div className="flex gap-2 print:hidden">
+              <button
+                className="rounded-md border border-line px-2.5 py-1 text-xs text-ink-2 hover:text-ink"
+                onClick={() => downloadCSV(`faissight-sweep-${result.param}.csv`, pts as never)}
+              >
+                CSV
+              </button>
+              <button
+                className="rounded-md border border-line px-2.5 py-1 text-xs text-ink-2 hover:text-ink"
+                onClick={() => downloadJSON(`faissight-sweep-${result.param}.json`, { ...result, target_recall: target, recommended: rec?.value ?? null })}
+              >
+                JSON
+              </button>
+            </div>
+          }
+        >
           <table className="w-full text-sm">
             <thead className="text-left text-xs text-muted">
               <tr>

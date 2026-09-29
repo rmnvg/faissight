@@ -25,7 +25,8 @@ import { fillColors } from '../lib/points'
 import { Banner, Card, EmptyState, Progress, ReasonBadge, Segmented, SnippetText, Spinner, StatTile } from '../components/ui'
 import { fmtDist, fmtNum } from '../lib/format'
 import { useMapData } from '../lib/mapData'
-import { intParam, navigate } from '../lib/route'
+import { downloadCSV, downloadJSON } from '../lib/exportData'
+import { intParam, navigate, toQueryString } from '../lib/route'
 import { CANVAS, type ThemeMode } from '../lib/theme'
 
 const IVF_KINDS = new Set(['IVF_FLAT', 'IVF_PQ', 'IVF_SQ'])
@@ -111,33 +112,58 @@ export default function QueryExplorer({
     return null
   }
 
+  // The URL is the source of truth for stored-id and text queries, so results are
+  // shareable and survive reloads. Pasted vectors are too long for a URL and run directly.
+  const urlParams = (req: SearchRequest): Record<string, string | number | null> => ({
+    id: req.query.id ?? null,
+    text: req.query.text ?? null,
+    k: req.k,
+    nprobe: req.nprobe ?? null,
+    ef: req.efSearch ?? null,
+    compare: req.compare ? null : 0,
+  })
+
   const submit = (e?: FormEvent) => {
     e?.preventDefault()
     const req = buildRequest()
-    if (req) {
+    if (!req) return
+    if (req.query.vector) {
       run.mutate(req)
-      if (req.query.id !== undefined)
-        navigate('query', { id: req.query.id, k, nprobe: isIvf ? nprobe : null, ef: isHnsw ? efSearch : null })
+      return
     }
+    const next = urlParams(req)
+    if (toQueryString(next) === params.toString()) run.mutate(req)  // same URL: re-run
+    else navigate('query', next)
   }
 
-  // Auto-run a query that arrived via the URL (e.g. "Query →" from the cluster map).
+  // Run the query the URL describes (links from other views, shared links, reloads).
+  const urlKey = params.toString()
+  const urlText = params.get('text')
   const autoRan = useRef<string | null>(null)
   useEffect(() => {
-    if (urlId === null || autoRan.current === String(urlId)) return
-    autoRan.current = String(urlId)
-    setQueryMode('id')
-    setIdInput(String(urlId))
+    if ((urlId === null && !urlText) || autoRan.current === urlKey) return
+    autoRan.current = urlKey
+    const urlK = intParam(params, 'k') ?? k
+    const urlNprobe = intParam(params, 'nprobe') ?? nprobe
+    const urlEf = intParam(params, 'ef') ?? efSearch
+    const urlCompare = params.get('compare') !== '0'
+    setQueryMode(urlId !== null ? 'id' : 'text')
+    if (urlId !== null) setIdInput(String(urlId))
+    else setText(urlText ?? '')
+    setK(urlK)
+    setNprobe(urlNprobe)
+    setEfSearch(urlEf)
+    setCompare(urlCompare)
     run.mutate({
-      query: { id: urlId },
-      k,
-      compare: true,
-      ...(isIvf ? { nprobe } : {}),
-      ...(isHnsw ? { efSearch } : {}),
+      query: urlId !== null ? { id: urlId } : { text: urlText ?? '' },
+      k: urlK,
+      compare: urlCompare,
+      ...(isIvf ? { nprobe: urlNprobe } : {}),
+      ...(isHnsw ? { efSearch: urlEf } : {}),
       projection: { method: 'pca', dims: 2 },
     })
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [urlId])
+  }, [urlKey])
 
   // "/" focuses the query box.
   useEffect(() => {
@@ -261,6 +287,7 @@ export default function QueryExplorer({
 
       {result && (
         <div className={`flex flex-col gap-4 ${run.isPending ? 'opacity-60' : ''}`}>
+          <ShareBar result={result} />
           <Headline result={result} isIvf={isIvf} />
           {result.search.truth_source === 'reconstructed' && (
             <Banner tone="warning">
@@ -374,7 +401,7 @@ function Headline({ result, isIvf }: { result: RunResult; isIvf: boolean }) {
                 {r === 'QUANTIZATION' && (
                   <button
                     onClick={() => navigate('quantization')}
-                    className="text-xs text-series-1 hover:underline"
+                    className="text-xs whitespace-nowrap text-series-1 hover:underline"
                   >
                     why? →
                   </button>
@@ -707,5 +734,53 @@ function TruthTable({ result, isIvf }: { result: SearchResponse; isIvf: boolean 
         </table>
       </div>
     </Card>
+  )
+}
+
+function ShareBar({ result }: { result: RunResult }) {
+  const [copied, setCopied] = useState(false)
+  const shareable = result.request.query.vector === undefined
+  const stamp = result.request.query.id !== undefined ? `id${result.request.query.id}` : 'query'
+  const button =
+    'rounded-md border border-line bg-surface px-2.5 py-1 text-xs text-ink-2 hover:text-ink'
+  return (
+    <div className="flex flex-wrap items-center justify-end gap-2 print:hidden">
+      {shareable && (
+        <button
+          className={button}
+          onClick={() =>
+            navigator.clipboard?.writeText(window.location.href).then(
+              () => {
+                setCopied(true)
+                window.setTimeout(() => setCopied(false), 1500)
+              },
+              () => setCopied(false),
+            )
+          }
+        >
+          {copied ? 'Link copied ✓' : 'Copy link'}
+        </button>
+      )}
+      <button className={button} onClick={() => downloadCSV(`faissight-${stamp}-results.csv`, result.search.results as never)}>
+        Results CSV
+      </button>
+      {result.search.truth && (
+        <button className={button} onClick={() => downloadCSV(`faissight-${stamp}-truth.csv`, result.search.truth as never)}>
+          Ground truth CSV
+        </button>
+      )}
+      <button
+        className={button}
+        onClick={() =>
+          downloadJSON(`faissight-${stamp}.json`, {
+            request: result.request,
+            search: result.search,
+            ivf_trace: result.trace,
+          })
+        }
+      >
+        JSON
+      </button>
+    </div>
   )
 }

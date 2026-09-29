@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { intParam } from './route'
+import { intParam, toQueryString } from './route'
 
 describe('intParam', () => {
   it('reads integers and rejects everything else', () => {
@@ -10,5 +10,13 @@ describe('intParam', () => {
     expect(intParam(p, 's')).toBeNull()
     expect(intParam(p, 'e')).toBeNull()
     expect(intParam(p, 'missing')).toBeNull()
+  })
+})
+
+describe('toQueryString', () => {
+  it('skips empty values and encodes text', () => {
+    expect(toQueryString({ id: null, text: 'what is ivf?', k: 10, ef: '' })).toBe(
+      'text=what+is+ivf%3F&k=10',
+    )
   })
 })

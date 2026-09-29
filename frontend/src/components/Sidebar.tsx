@@ -24,12 +24,14 @@ export function Sidebar({
   onNavigate,
   themePref,
   onTheme,
+  onFocus,
 }: {
   info: Info | undefined
   view: View
   onNavigate: (v: View) => void
   themePref: ThemePref
   onTheme: (p: ThemePref) => void
+  onFocus: () => void
 }) {
   const supported = info?.supported ?? false
   const nav: { view: View; label: string; hint: string; enabled: boolean }[] = [
@@ -59,7 +61,7 @@ export function Sidebar({
     },
   ]
   return (
-    <aside className="flex w-64 shrink-0 flex-col gap-4 border-r border-line bg-surface p-4">
+    <aside className="flex w-64 shrink-0 flex-col gap-4 overflow-auto border-r border-line bg-surface p-4 print:hidden">
       <div>
         <div className="text-base font-semibold tracking-tight text-ink">faissight</div>
         <div className="text-xs text-muted">see inside your FAISS index</div>
@@ -129,7 +131,12 @@ export function Sidebar({
             { value: 'system', label: 'Auto' },
           ]}
         />
-        {info && <div className="text-[11px] text-muted">faissight {info.version}</div>}
+        <div className="flex items-center justify-between text-[11px] text-muted">
+          {info && <span>faissight {info.version}</span>}
+          <button onClick={onFocus} className="hover:text-ink" title="Hide the sidebar (\)">
+            Hide sidebar
+          </button>
+        </div>
       </div>
     </aside>
   )

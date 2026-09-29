@@ -103,12 +103,16 @@ def test_reconstructed_source_computed_once(synthetic, monkeypatch) -> None:
     calls = []
     real = V.reconstruct_all
 
+    s = Session(synthetic["ivf_flat"])
+
     def counting(li):
-        calls.append(1)
+        # Count only this session's calls: background jobs from earlier tests' sessions can
+        # still be running and would hit the same module-level function.
+        if li is s.li:
+            calls.append(1)
         return real(li)
 
     monkeypatch.setattr(session_mod, "reconstruct_all", counting)
-    s = Session(synthetic["ivf_flat"])
     queries = np.load(synthetic["queries"])
     with ThreadPoolExecutor(8) as pool:
         reports = list(pool.map(lambda i: s.query(id=int(i), k=5, nprobe=4), range(16)))
