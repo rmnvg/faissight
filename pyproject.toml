@@ -58,6 +58,16 @@ Issues = "https://github.com/rmnvg/faissight/issues"
 requires = ["hatchling"]
 build-backend = "hatchling.build"
 
+[tool.hatch.build]
+# static/ is gitignored (it's a build output) but must ship, so force-include it.
+artifacts = ["src/faissight/static/**"]
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/faissight"]
+
+[tool.hatch.build.targets.sdist]
+include = ["src/faissight", "tests", "README.md", "LICENSE", "pyproject.toml"]
+
 [tool.ruff]
 line-length = 100
 target-version = "py310"
