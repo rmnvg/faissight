@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import importlib.util
 import sys
+from collections.abc import Iterator
 from pathlib import Path
 from types import ModuleType
 
@@ -48,9 +49,12 @@ def binary_index_path(tmp_path_factory: pytest.TempPathFactory) -> Path:
     return path
 
 
-@pytest.fixture(autouse=True)
-def _isolated_cache(
-    tmp_path_factory: pytest.TempPathFactory, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    """Never write projection caches to the real ~/.cache during tests."""
-    monkeypatch.setenv("FAISSIGHT_CACHE_DIR", str(tmp_path_factory.mktemp("cache")))
+@pytest.fixture(scope="session", autouse=True)
+def _isolated_cache(tmp_path_factory: pytest.TempPathFactory) -> Iterator[None]:
+    """Never touch the real ~/.cache during tests.
+
+    Session-scoped so it is active before any module-scoped fixture creates a Session.
+    """
+    with pytest.MonkeyPatch.context() as mp:
+        mp.setenv("FAISSIGHT_CACHE_DIR", str(tmp_path_factory.mktemp("cache")))
+        yield
