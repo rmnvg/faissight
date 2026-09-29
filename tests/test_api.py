@@ -525,3 +525,70 @@ def test_trace_hnsw_through_idmap() -> None:
     assert all(r["id"] >= 100 and (r["id"] - 100) % 4 == 0 for r in body["results"])
     assert 104 not in [r["id"] for r in body["results"]]
     assert body["overlap_with_faiss"] == 1.0
+
+
+# --- quantization ------------------------------------------------------------------------
+
+
+def _wait_pq(client):
+    for _ in range(500):
+        r = client.get("/api/pq/error")
+        if r.status_code != 202:
+            return r
+        time.sleep(0.02)
+    raise AssertionError("pq analysis never finished")
+
+
+def test_pq_error_ivfpq(synthetic) -> None:
+    client = _client(
+        Session(synthetic["ivf_pq"], vectors=synthetic["vectors"], metadata=synthetic["chunks"])
+    )
+    body = _wait_pq(client).json()
+    assert body["available"] is True
+    assert (body["kind"], body["n"], body["code_size"], body["raw_bytes"]) == (
+        "IVF_PQ",
+        N,
+        8,
+        4 * D,
+    )
+    assert body["mean"] > 1
+    assert body["median"] <= body["p95"] <= body["max"]
+    assert sum(body["histogram"]["counts"]) == N
+    assert len(body["histogram"]["edges"]) == len(body["histogram"]["counts"]) + 1
+    assert len(body["per_list"]) == NLIST
+    assert sum(r["size"] for r in body["per_list"]) == N
+    worst = body["worst"]
+    assert len(worst) == 50
+    assert worst[0]["error"] == pytest.approx(body["max"], rel=1e-5)
+    assert worst[0]["list_no"] is not None
+    assert worst[0]["snippet"]["text"]
+    d = body["distortion"]
+    assert len(d["true"]) == len(d["approx"]) == len(d["near"])
+    assert d["near_correlation"] < d["correlation"]
+
+
+def test_pq_error_ivfflat_zero(ivf_client) -> None:
+    body = _wait_pq(ivf_client).json()
+    assert body["available"] is True
+    assert body["mean"] == pytest.approx(0.0, abs=1e-6)
+
+
+def test_pq_error_needs_raw_vectors(pq_client) -> None:
+    r = pq_client.get("/api/pq/error")
+    assert r.status_code == 200
+    body = r.json()
+    assert body["available"] is False
+    assert body["reason"] == "Provide --vectors to measure quantization error."
+    assert body["hint"]
+
+
+def test_pq_error_hnsw_no_lists(hnsw_client) -> None:
+    body = _wait_pq(hnsw_client).json()
+    assert body["available"] is True
+    assert body["per_list"] is None
+
+
+def test_pq_error_unsupported(binary_index_path) -> None:
+    _assert_error(
+        _client(Session(binary_index_path)).get("/api/pq/error"), 400, "UNSUPPORTED_INDEX"
+    )

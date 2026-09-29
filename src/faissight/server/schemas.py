@@ -338,3 +338,54 @@ class HnswTraceResponse(BaseModel):
     nodes: dict[str, list[float]]
     """Layout for every node in the trace: ``ids``, ``x``, ``y``, ``top_levels``."""
     query_xy: list[float] | None = None
+
+
+# --- quantization ------------------------------------------------------------------------
+
+
+class PqHistogram(BaseModel):
+    edges: list[float]
+    counts: list[int]
+
+
+class PqListError(BaseModel):
+    list_no: int
+    size: int
+    mean_error: float
+
+
+class PqWorst(BaseModel):
+    id: int
+    error: float
+    relative: float
+    list_no: int | None = None
+    snippet: dict[str, str] | None = None
+
+
+class PqDistortion(BaseModel):
+    true: list[float]
+    approx: list[float]
+    near: list[bool]
+    correlation: float
+    near_correlation: float
+
+
+class PqErrorResponse(BaseModel):
+    available: bool
+    reason: str | None = None
+    hint: str | None = None
+    kind: str | None = None
+    metric: str | None = None
+    n: int | None = None
+    code_size: int | None = None
+    raw_bytes: int | None = None
+    has_transform: bool = False
+    mean: float | None = None
+    median: float | None = None
+    p95: float | None = None
+    max: float | None = None
+    relative_mean: float | None = None
+    histogram: PqHistogram | None = None
+    per_list: list[PqListError] | None = None
+    worst: list[PqWorst] | None = None
+    distortion: PqDistortion | None = None

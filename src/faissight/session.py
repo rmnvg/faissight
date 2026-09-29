@@ -16,6 +16,7 @@ import numpy.typing as npt
 
 from faissight.core import hnsw as hnsw_mod
 from faissight.core import hnsw_trace, ivf
+from faissight.core import pq as pq_mod
 from faissight.core.embed import (
     Embedder,
     EmbedderUnavailableError,
@@ -322,6 +323,24 @@ class Session:
             ref = self._once(key, lambda: core_vectors(self.li, self.source, proj.ids))
         placed: npt.NDArray[np.float32] = place_points(proj, x_core, ref)[0]
         return placed
+
+    # --- quantization ---------------------------------------------------------------------
+
+    def pq_job(self) -> Job[pq_mod.QuantizationReport]:
+        """Background job measuring reconstruction error. Needs raw vectors."""
+        if not self.li.is_supported:
+            raise ValueError(f"Cannot analyse: {self.li.unsupported_reason}")
+        if self._raw is None:
+            raise pq_mod.RawVectorsRequiredError()
+        raw = self._raw
+
+        def work(progress: Callable[[float, str], None]) -> pq_mod.QuantizationReport:
+            progress(0.1, "Decoding stored vectors")
+            stored = self._once("reconstructed", lambda: reconstruct_all(self.li))
+            progress(0.6, "Measuring error and distortion")
+            return pq_mod.analyze(self.li, raw, stored, self.assignments)
+
+        return self.jobs.get_or_start(("pq",), work)
 
     # --- HNSW -----------------------------------------------------------------------------
 
