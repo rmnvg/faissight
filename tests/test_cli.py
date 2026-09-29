@@ -1,7 +1,19 @@
+import json
+import os
+import socket
+import subprocess
+import sys
+import time
+import urllib.request
+from typing import ClassVar
+
+import numpy as np
+import pytest
 from typer.testing import CliRunner
 
 from faissight import __version__
 from faissight.cli import app
+from tests.conftest import SMALL
 
 runner = CliRunner()
 
@@ -42,3 +54,189 @@ def test_info_missing_file(tmp_path) -> None:
     result = runner.invoke(app, ["info", str(tmp_path / "nope.index")])
     assert result.exit_code == 1
     assert "not found" in result.output
+
+
+# --- serve ---------------------------------------------------------------------------------
+
+
+class FakeServer:
+    """Stands in for uvicorn.Server so tests don't bind ports or block."""
+
+    instances: ClassVar[list["FakeServer"]] = []
+
+    def __init__(self, config) -> None:
+        self.config = config
+        self.started = False
+        FakeServer.instances.append(self)
+
+    def run(self) -> None:
+        self.started = True
+
+
+@pytest.fixture
+def fake_uvicorn(monkeypatch):
+    import faissight.cli as cli_mod
+
+    FakeServer.instances.clear()
+    opened = []
+    monkeypatch.setattr(cli_mod.uvicorn, "Server", FakeServer)
+    monkeypatch.setattr(cli_mod.webbrowser, "open", opened.append)
+    return opened
+
+
+def test_serve_starts_server(synthetic, fake_uvicorn) -> None:
+    result = runner.invoke(
+        app,
+        [
+            "serve",
+            str(synthetic["ivf_flat"]),
+            "--vectors",
+            str(synthetic["vectors"]),
+            "--meta",
+            str(synthetic["chunks"]),
+            "--port",
+            "8911",
+            "--no-browser",
+        ],
+    )
+    assert result.exit_code == 0, result.output
+    assert "IVF_FLAT" in result.output
+    assert "http://127.0.0.1:8911/" in result.output
+    assert "reconstructed" not in result.output
+    (server,) = FakeServer.instances
+    assert (server.config.host, server.config.port) == ("127.0.0.1", 8911)
+    assert fake_uvicorn == []  # --no-browser
+
+
+def test_serve_opens_browser_when_ready(synthetic, fake_uvicorn) -> None:
+    result = runner.invoke(app, ["serve", str(synthetic["flat_l2"]), "--port", "8912"])
+    assert result.exit_code == 0, result.output
+    for _ in range(100):
+        if fake_uvicorn:
+            break
+        time.sleep(0.02)
+    assert fake_uvicorn == ["http://127.0.0.1:8912/"]
+
+
+def test_serve_warns_without_vectors(synthetic, fake_uvicorn) -> None:
+    result = runner.invoke(
+        app, ["serve", str(synthetic["ivf_pq"]), "--no-browser", "--port", "8913"]
+    )
+    assert result.exit_code == 0, result.output
+    assert "reconstructed vectors" in result.output
+
+
+def test_serve_warns_on_partial_metadata(synthetic, fake_uvicorn) -> None:
+    result = runner.invoke(
+        app,
+        [
+            "serve",
+            str(synthetic["idmap_flat"]),
+            "--meta",
+            str(synthetic["chunks"]),
+            "--no-browser",
+            "--port",
+            "8914",
+        ],
+    )
+    assert result.exit_code == 0, result.output
+    assert "Metadata covers" in result.output
+
+
+def test_serve_display_url_for_all_interfaces(synthetic, fake_uvicorn) -> None:
+    result = runner.invoke(
+        app,
+        ["serve", str(synthetic["flat_l2"]), "--host", "0.0.0.0", "--port", "8915", "--no-browser"],
+    )
+    assert result.exit_code == 0, result.output
+    assert "http://127.0.0.1:8915/" in result.output
+
+
+@pytest.mark.parametrize(
+    ("extra", "message"),
+    [
+        (["--vectors", "QUERIES"], "vectors but the index holds"),
+        (["--ids", "IDS"], "--ids needs --vectors"),
+        (["--queries", "VECTORS_BAD_DIM"], "Queries have shape"),
+        (["--meta", "MISSING"], "not found"),
+        (["--max-points", "0"], "max_points"),
+    ],
+)
+def test_serve_input_errors(synthetic, fake_uvicorn, tmp_path, extra, message) -> None:
+    bad = tmp_path / "bad.npy"
+    np.save(bad, np.zeros((3, 5), dtype=np.float32))
+    subs = {
+        "QUERIES": str(synthetic["queries"]),
+        "IDS": str(synthetic["ids_idmap"]),
+        "VECTORS_BAD_DIM": str(bad),
+        "MISSING": str(tmp_path / "nope.jsonl"),
+    }
+    args = [subs.get(a, a) for a in extra]
+    result = runner.invoke(app, ["serve", str(synthetic["ivf_flat"]), "--no-browser", *args])
+    assert result.exit_code == 1
+    assert message in result.output
+    assert not FakeServer.instances
+
+
+def test_serve_bad_index(tmp_path, fake_uvicorn) -> None:
+    result = runner.invoke(app, ["serve", str(tmp_path / "missing.index"), "--no-browser"])
+    assert result.exit_code == 1
+    assert "not found" in result.output
+
+
+def test_serve_port_in_use(synthetic, fake_uvicorn) -> None:
+    with socket.socket() as s:
+        s.bind(("127.0.0.1", 0))
+        s.listen()
+        port = s.getsockname()[1]
+        result = runner.invoke(app, ["serve", str(synthetic["flat_l2"]), "--port", str(port)])
+    assert result.exit_code == 1
+    assert "already in use" in result.output
+
+
+def test_serve_real_subprocess(synthetic, tmp_path) -> None:
+    # Acceptance: `faissight serve` starts and answers /api/info and /api/search.
+    with socket.socket() as s:
+        s.bind(("127.0.0.1", 0))
+        port = s.getsockname()[1]
+    env = {**os.environ, "FAISSIGHT_CACHE_DIR": str(tmp_path)}
+    proc = subprocess.Popen(
+        [
+            sys.executable,
+            "-m",
+            "faissight",
+            "serve",
+            str(synthetic["ivf_flat"]),
+            "--vectors",
+            str(synthetic["vectors"]),
+            "--meta",
+            str(synthetic["chunks"]),
+            "--port",
+            str(port),
+            "--no-browser",
+        ],
+        stdout=subprocess.PIPE,
+        stderr=subprocess.STDOUT,
+        env=env,
+    )
+    try:
+        base = f"http://127.0.0.1:{port}/api"
+        for _ in range(200):
+            try:
+                info = json.load(urllib.request.urlopen(f"{base}/info", timeout=1))
+                break
+            except OSError:
+                time.sleep(0.05)
+        else:
+            raise AssertionError(proc.stdout.read().decode() if proc.stdout else "no output")
+        assert info["kind"] == "IVF_FLAT"
+        req = urllib.request.Request(
+            f"{base}/search",
+            data=json.dumps({"query": {"id": 3}, "nprobe": SMALL["nlist"]}).encode(),
+            headers={"content-type": "application/json"},
+        )
+        body = json.load(urllib.request.urlopen(req, timeout=5))
+        assert body["recall"] == 1.0
+    finally:
+        proc.terminate()
+        proc.wait(10)
