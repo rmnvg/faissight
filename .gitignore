@@ -26,3 +26,4 @@ examples/data/
 .DS_Store
 .idea/
 .vscode/
+examples/rag_data/
