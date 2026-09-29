@@ -24,3 +24,8 @@ One line per non-obvious technical decision.
 - Reconstruction enables a direct map on IVF indexes (array for sequential ids, hashtable for `add_with_ids` ids). This mutates the index object but not its search results (tested).
 - Reconstructed vectors for PreTransform indexes are mapped back to input space with `reverse_transform`, which is lossy for PCA.
 - `faissight.core` does not re-export the `search` function: it would shadow the `core.search` submodule (`from faissight.core import search` would return the function). Use `core.search.search(...)`.
+- Projections are computed in core space (after PreTransform) so points, IVF centroids and queries share one space.
+- PCA uses `eigh` on the d×d covariance rather than an SVD of the data (~5x faster for n >> d); component signs are normalised for determinism.
+- UMAP queries are placed by inverse-distance-weighted kNN interpolation over the projected sample, not `umap.transform` (4.7 s for 10 queries on 20k points). Centroids use `.transform` once at fit time and are cached.
+- Projection cache key = index sha1 (dir) + method + dims + max_points + seed + sha1 of the sampled vectors, so raw vs reconstructed vectors never collide. Stored as `.npz` (no pickle), written atomically. `FAISSIGHT_CACHE_DIR` / `XDG_CACHE_HOME` override the location.
+- UMAP tests are marked `slow` (cold numba import ~35 s) and excluded by default; CI runs them with `-m "slow or not slow"`.

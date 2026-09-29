@@ -33,7 +33,7 @@ jobs:
       - name: Typecheck
         run: uv run mypy
       - name: Test
-        run: uv run pytest --cov=faissight --cov-report=term-missing
+        run: uv run pytest -m "slow or not slow" --cov=faissight --cov-report=term-missing
 
   frontend:
     name: Frontend build
