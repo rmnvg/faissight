@@ -29,6 +29,12 @@ UV_PROJECT_ENVIRONMENT=/tmp/faissight-py310 UV_PYTHON=3.10 uv sync --all-extras 
 UV_PROJECT_ENVIRONMENT=/tmp/faissight-py310 UV_PYTHON=3.10 uv run mypy
 
 cd frontend && npm install && npm run build   # builds into src/faissight/static
+cd frontend && npm run dev        # Vite dev server; proxies /api to `faissight serve` on :8765
+cd frontend && npx tsc -p tsconfig.app.json --noEmit && npx oxlint src
+
+# Visual checks: headless Chrome needs --enable-gpu (deck.gl requires WebGL2; the SwiftShader
+# flags disable it). --virtual-time-budget screenshots can fire before deck.gl's first frame;
+# capture via the DevTools protocol after a real wait instead.
 uv build                          # wheel + sdist (build the frontend first)
 ```
 

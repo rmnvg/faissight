@@ -37,3 +37,12 @@ One line per non-obvious technical decision.
 - `/api/search` takes an optional `projection: {method, dims}`; if that projection is ready, the response includes the query's coordinates. The UI can't place text queries itself, since it never sees vectors.
 - Unknown `/api/*` paths return JSON 404s; all other unknown paths fall back to `index.html` for client-side routing. Without a built frontend, `/` serves a short "run npm run build" page.
 - OpenAPI docs are served at `/api/docs` so they don't collide with SPA routes.
+- Cluster-map points are not coloured per IVF list: 128+ lists can't get distinguishable categorical hues (the dataviz rules forbid cycling past 8). Points are neutral, the focused list is highlighted in series blue, and "by list size" uses the sequential blue ramp.
+- Query map uses three validated categorical slots (blue returned, orange missed true neighbour, ink query target); miss reasons use status colours, always with an icon and a label.
+- Colour roles live as CSS variables (index.css) with dark steps chosen for the dark surface, mirrored in `lib/theme.ts` for deck.gl, which needs RGB arrays.
+- Hash routing (`#/query?id=42&nprobe=4`) instead of a router dependency; URLs are shareable and "Query →" links auto-run.
+- Map views are `React.lazy` chunks so deck.gl (~600 kB) loads only when a map opens; recharts ships with the Overview.
+- The query map opens framed on the query, its results and its missed neighbours; "Reset view" shows all points.
+- Recharts animations are off (charts must not flash or re-animate on refetch). Probe-chart dots share the line's dataset, because a separate scatter dataset drives the y-domain on its own and clips the line.
+- `ScatterMap` derives its fitted view state during render and keeps user pan/zoom keyed to that framing, instead of calling setState in an effect.
+- Frontend tests (Vitest, Playwright) are listed in the plan's testing section but not in its dependency list; deferred until approved.

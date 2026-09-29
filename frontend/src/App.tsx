@@ -1,12 +1,60 @@
+import { lazy, Suspense } from 'react'
+import { useInfo } from './api/hooks'
+import { Sidebar } from './components/Sidebar'
+import { Banner, Spinner } from './components/ui'
+import { navigate, useRoute } from './lib/route'
+import { useTheme } from './lib/theme'
+import { Overview } from './views/Overview'
+
+// deck.gl is heavy; only load it when a map view is opened.
+const ClusterMap = lazy(() => import('./views/ClusterMap'))
+const QueryExplorer = lazy(() => import('./views/QueryExplorer'))
+
 export default function App() {
+  const info = useInfo()
+  const route = useRoute()
+  const { mode, pref, setPref } = useTheme()
+
+  const supported = info.data?.supported ?? false
+  const view = supported ? route.view : 'overview'
+
   return (
-    <main className="flex min-h-screen items-center justify-center bg-white text-slate-900 dark:bg-slate-950 dark:text-slate-100">
-      <div className="text-center">
-        <h1 className="text-3xl font-semibold tracking-tight">faissight</h1>
-        <p className="mt-2 text-slate-500 dark:text-slate-400">
-          See inside your FAISS index. UI coming soon.
-        </p>
-      </div>
-    </main>
+    <div className="flex h-full bg-page text-ink">
+      <Sidebar
+        info={info.data}
+        view={view}
+        onNavigate={(v) => navigate(v)}
+        themePref={pref}
+        onTheme={setPref}
+      />
+      <main className="min-w-0 flex-1 overflow-auto">
+        {info.isPending ? (
+          <div className="p-8">
+            <Spinner label="Connecting to faissight…" />
+          </div>
+        ) : info.isError ? (
+          <div className="p-8">
+            <Banner tone="error">
+              Could not load the index: {info.error.message}. Is <code>faissight serve</code>{' '}
+              running?
+            </Banner>
+          </div>
+        ) : (
+          <Suspense
+            fallback={
+              <div className="p-8">
+                <Spinner />
+              </div>
+            }
+          >
+            {view === 'overview' && <Overview info={info.data} />}
+            {view === 'map' && <ClusterMap info={info.data} params={route.params} mode={mode} />}
+            {view === 'query' && (
+              <QueryExplorer info={info.data} params={route.params} mode={mode} />
+            )}
+          </Suspense>
+        )}
+      </main>
+    </div>
   )
 }
