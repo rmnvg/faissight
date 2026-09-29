@@ -9,3 +9,4 @@ One line per non-obvious technical decision.
 - Vite `base: './'` (relative asset URLs) so the built UI works under path-prefixing proxies (Jupyter/Colab/HF Spaces).
 - Tailwind v4 via `@tailwindcss/vite` plugin (no PostCSS/tailwind.config needed).
 - `static/` is gitignored but force-included in wheel and sdist via hatch `artifacts`; the frontend must be built before `uv build`.
+- Synthetic builders live in `examples/make_synthetic.py`; `tests/conftest.py` imports it by path so demos and tests share one code path (at smaller n/nlist).
