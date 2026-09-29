@@ -43,7 +43,7 @@ def load_index(source: str | os.PathLike[str] | Any) -> LoadedIndex:
     if class_name(root).startswith("Gpu"):
         return _unsupported_basic(index, path, f"GPU indexes are not supported. {GPU_HINT}")
 
-    core, class_chain, transforms, ids, has_refine = _unwrap(root)
+    core, class_chain, transforms, vector_transforms, ids, refine_k_factor = _unwrap(root)
     metric = _metric(root.metric_type)
     ivf = core if isinstance(core, faiss.IndexIVF) else None
     kind, reason = _detect_kind(core)
@@ -63,7 +63,8 @@ def load_index(source: str | os.PathLike[str] | Any) -> LoadedIndex:
         params=_read_params(core, ivf),
         ivf=ivf,
         transforms=transforms,
-        has_refine=has_refine,
+        vector_transforms=vector_transforms,
+        refine_k_factor=refine_k_factor,
         ids=ids,
         path=path,
         unsupported_reason=reason,
@@ -86,20 +87,24 @@ def _read(path: Path) -> Any:
 
 def _unwrap(
     root: Any,
-) -> tuple[Any, list[str], list[TransformInfo], npt.NDArray[np.int64] | None, bool]:
+) -> tuple[
+    Any, list[str], list[TransformInfo], list[Any], npt.NDArray[np.int64] | None, float | None
+]:
     """Walk PreTransform / IDMap / Refine wrappers down to the core index."""
     faiss = import_faiss()
     cur = root
     chain: list[str] = []
     transforms: list[TransformInfo] = []
+    vector_transforms: list[Any] = []
     ids: npt.NDArray[np.int64] | None = None
-    has_refine = False
+    refine_k_factor: float | None = None
     while True:
         chain.append(class_name(cur))
         if isinstance(cur, faiss.IndexPreTransform):
             for i in range(cur.chain.size()):
                 vt = faiss.downcast_VectorTransform(cur.chain.at(i))
                 transforms.append(TransformInfo(class_name(vt), int(vt.d_in), int(vt.d_out)))
+                vector_transforms.append(vt)
             cur = faiss.downcast_index(cur.index)
         elif isinstance(cur, faiss.IndexIDMap):  # also matches IndexIDMap2
             inner = faiss.vector_to_array(cur.id_map).astype(np.int64)
@@ -107,10 +112,10 @@ def _unwrap(
             ids = inner if ids is None else ids[inner]
             cur = faiss.downcast_index(cur.index)
         elif isinstance(cur, faiss.IndexRefine):
-            has_refine = True
+            refine_k_factor = float(cur.k_factor)
             cur = faiss.downcast_index(cur.base_index)
         else:
-            return cur, chain, transforms, ids, has_refine
+            return cur, chain, transforms, vector_transforms, ids, refine_k_factor
 
 
 def _detect_kind(core: Any) -> tuple[IndexKind, str | None]:

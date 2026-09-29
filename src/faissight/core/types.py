@@ -94,10 +94,31 @@ class LoadedIndex:
     params: IndexParams
     ivf: Any = None
     transforms: list[TransformInfo] = field(default_factory=list)
-    has_refine: bool = False
+    vector_transforms: list[Any] = field(default_factory=list)
+    """Non-owning ``VectorTransform`` views, in the order they are applied to queries."""
+    refine_k_factor: float | None = None
+    """``k_factor`` of an ``IndexRefine`` wrapper; ``None`` when there is no refine step."""
     ids: npt.NDArray[np.int64] | None = None
     path: Path | None = None
     unsupported_reason: str | None = None
+
+    @property
+    def has_refine(self) -> bool:
+        return self.refine_k_factor is not None
+
+    def to_core_space(self, x: npt.NDArray[np.float32]) -> npt.NDArray[np.float32]:
+        """Apply any PreTransform chain: input space (``d``) -> core space (``core_d``)."""
+        x = np.ascontiguousarray(x, dtype=np.float32)
+        for vt in self.vector_transforms:
+            x = vt.apply(x)
+        return x
+
+    def from_core_space(self, x: npt.NDArray[np.float32]) -> npt.NDArray[np.float32]:
+        """Invert the PreTransform chain (lossy for dimensionality reduction like PCA)."""
+        x = np.ascontiguousarray(x, dtype=np.float32)
+        for vt in reversed(self.vector_transforms):
+            x = vt.reverse_transform(x)
+        return x
 
     @property
     def has_id_map(self) -> bool:
