@@ -1,1 +1,90 @@
-"""Core library: FAISS inspection with no web dependencies."""
+"""Core library: FAISS inspection with no web dependencies.
+
+Typical flow::
+
+    from faissight import core
+
+    li = core.load_index("my.index")                   # detect kind, unwrap wrappers
+    source = core.from_arrays(li, raw_vectors)          # or core.reconstruct_all(li)
+    gt = core.GroundTruth(source, li.metric)
+    q = core.resolve_query(li, id=123, source=source)   # or vector=..., text=... + embedder
+    report = core.explain_query(
+        li, q, k=10, nprobe=8, ground_truth=gt, assignments=core.assignments(li)
+    )
+    report.recall, report.ivf_trace.min_nprobe_for_all
+
+A bare search is ``core.search.search(li, vector, k, nprobe=...)``. The function isn't
+re-exported here because it would shadow the ``core.search`` module.
+
+FAISS is imported lazily, so importing this package works without FAISS installed.
+"""
+
+from faissight.core._faiss import FaissNotInstalledError
+from faissight.core.ivf import (
+    Assignments,
+    ListStats,
+    NotAnIVFIndexError,
+    assignments,
+    centroids,
+    imbalance_factor,
+    list_members,
+    list_sizes,
+    list_stats,
+)
+from faissight.core.loader import IndexLoadError, load_index
+from faissight.core.search import (
+    Embedder,
+    GroundTruth,
+    IvfTrace,
+    MissReason,
+    NeighbourTrace,
+    QueryError,
+    QueryKind,
+    QueryReport,
+    ResolvedQuery,
+    SearchResult,
+    explain_query,
+    recall_at_k,
+    resolve_query,
+    trace_ivf,
+)
+from faissight.core.types import IndexKind, IndexParams, LoadedIndex, Metric, TransformInfo
+from faissight.core.vectors import VectorMismatchError, VectorSource, from_arrays, reconstruct_all
+
+__all__ = [
+    "Assignments",
+    "Embedder",
+    "FaissNotInstalledError",
+    "GroundTruth",
+    "IndexKind",
+    "IndexLoadError",
+    "IndexParams",
+    "IvfTrace",
+    "ListStats",
+    "LoadedIndex",
+    "Metric",
+    "MissReason",
+    "NeighbourTrace",
+    "NotAnIVFIndexError",
+    "QueryError",
+    "QueryKind",
+    "QueryReport",
+    "ResolvedQuery",
+    "SearchResult",
+    "TransformInfo",
+    "VectorMismatchError",
+    "VectorSource",
+    "assignments",
+    "centroids",
+    "explain_query",
+    "from_arrays",
+    "imbalance_factor",
+    "list_members",
+    "list_sizes",
+    "list_stats",
+    "load_index",
+    "recall_at_k",
+    "reconstruct_all",
+    "resolve_query",
+    "trace_ivf",
+]

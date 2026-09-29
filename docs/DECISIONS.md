@@ -23,3 +23,4 @@ One line per non-obvious technical decision.
 - New `core/vectors.py` (not in the original layout): `VectorSource` holds input-space vectors sorted by user id, whether raw or reconstructed; ground truth, query-by-id, projection and PQ error all share it.
 - Reconstruction enables a direct map on IVF indexes (array for sequential ids, hashtable for `add_with_ids` ids). This mutates the index object but not its search results (tested).
 - Reconstructed vectors for PreTransform indexes are mapped back to input space with `reverse_transform`, which is lossy for PCA.
+- `faissight.core` does not re-export the `search` function: it would shadow the `core.search` submodule (`from faissight.core import search` would return the function). Use `core.search.search(...)`.
