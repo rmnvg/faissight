@@ -1,5 +1,6 @@
 import time
 
+import faiss
 import numpy as np
 import pytest
 from fastapi.testclient import TestClient
@@ -401,3 +402,126 @@ def test_sweep_flat_index(synthetic) -> None:
 def test_sweep_unsupported(binary_index_path) -> None:
     client = _client(Session(binary_index_path))
     _assert_error(client.post("/api/sweep", json={}), 400, "UNSUPPORTED_INDEX")
+
+
+# --- HNSW --------------------------------------------------------------------------------
+
+
+def test_hnsw_stats(hnsw_client) -> None:
+    body = hnsw_client.get("/api/hnsw/stats").json()
+    assert body["m"] == SMALL["hnsw_m"]
+    assert [lv["level"] for lv in body["levels"]] == list(range(body["max_level"], -1, -1))
+    assert body["levels"][-1]["n_nodes"] == N
+    assert body["levels"][-1]["max_links"] == 2 * SMALL["hnsw_m"]
+    assert sum(body["levels"][-1]["degree_hist"]) == N
+
+
+def test_hnsw_graph_top_level_complete(hnsw_client) -> None:
+    stats = hnsw_client.get("/api/hnsw/stats").json()
+    top = stats["max_level"]
+    body = hnsw_client.get("/api/hnsw/graph", params={"level": 1}).json()
+    assert body["level"] == 1
+    assert not body["sampled"]
+    assert len(body["ids"]) == body["n_level_nodes"] == len(body["x"]) == len(body["top_levels"])
+    assert all(t >= 1 for t in body["top_levels"])
+    assert len(body["edges_src"]) == len(body["edges_dst"]) > 0
+    n = len(body["ids"])
+    assert all(0 <= i < n for i in body["edges_src"] + body["edges_dst"])
+    pairs = list(zip(body["edges_src"], body["edges_dst"], strict=True))
+    assert len(pairs) == len({tuple(sorted(p)) for p in pairs})  # undirected, deduplicated
+    assert (
+        stats["entry_point"]
+        in hnsw_client.get("/api/hnsw/graph", params={"level": top}).json()["ids"]
+    )
+
+
+def test_hnsw_graph_level0_sampled_around(hnsw_client) -> None:
+    body = hnsw_client.get("/api/hnsw/graph", params={"level": 0, "limit": 150, "around": 7}).json()
+    assert body["sampled"]
+    assert len(body["ids"]) == 150
+    assert body["ids"][0] == 7
+    assert body["n_level_nodes"] == N
+
+
+@pytest.mark.parametrize(
+    ("params", "status", "code"),
+    [
+        ({"level": 99}, 404, "NOT_FOUND"),
+        ({"level": 0, "around": 10**9}, 404, "NOT_FOUND"),
+        ({"limit": 0}, 422, "VALIDATION_ERROR"),
+    ],
+)
+def test_hnsw_graph_errors(hnsw_client, params, status, code) -> None:
+    _assert_error(hnsw_client.get("/api/hnsw/graph", params=params), status, code)
+
+
+def test_hnsw_graph_around_node_not_on_level(hnsw_client) -> None:
+    body = hnsw_client.get("/api/hnsw/graph", params={"level": 0, "limit": 5000}).json()
+    ground = next(i for i, t in zip(body["ids"], body["top_levels"], strict=True) if t == 0)
+    _assert_error(
+        hnsw_client.get("/api/hnsw/graph", params={"level": 1, "around": ground}),
+        400,
+        "BAD_REQUEST",
+    )
+
+
+def test_hnsw_endpoints_need_hnsw(ivf_client) -> None:
+    for r in (
+        ivf_client.get("/api/hnsw/stats"),
+        ivf_client.get("/api/hnsw/graph"),
+        ivf_client.post("/api/trace/hnsw", json={"query": {"id": 1}}),
+    ):
+        _assert_error(r, 400, "NOT_HNSW")
+
+
+def test_trace_hnsw(hnsw_client) -> None:
+    _wait_projection(hnsw_client)
+    body = hnsw_client.post(
+        "/api/trace/hnsw", json={"query": {"id": 12}, "k": 10, "efSearch": 32}
+    ).json()
+    assert (body["ef_search"], body["k"]) == (32, 10)
+    assert [lv["level"] for lv in body["levels"]] == list(range(body["max_level"], -1, -1))
+    assert body["levels"][0]["entry"] == body["entry_point"]
+    assert body["overlap_with_faiss"] >= 0.95
+    ids = [r["id"] for r in body["results"]]
+    assert len(ids) == 10
+    assert 12 not in ids  # the query's own vector is excluded, like in /search
+    dists = [r["distance"] for r in body["results"]]
+    assert dists == sorted(dists)
+    assert body["recall"] is not None
+    outcomes = {t["outcome"] for t in body["truth"]}
+    assert outcomes <= {"FOUND", "NOT_REACHED", "VISITED_NOT_KEPT"}
+    # Every node the UI draws has a position.
+    drawn = set(body["nodes"]["ids"])
+    for lv in body["levels"]:
+        for st in lv["steps"]:
+            assert st["expanded"] in drawn
+            assert all(v["node"] in drawn for v in st["visits"])
+    assert set(ids) <= drawn
+    assert len(body["query_xy"]) == 2
+    assert len(body["levels"][-1]["steps"]) > 0
+
+
+def test_trace_hnsw_inner_product_shows_similarity() -> None:
+    x = np.random.default_rng(0).standard_normal((800, 16)).astype(np.float32)
+    x /= np.linalg.norm(x, axis=1, keepdims=True)
+    index = faiss.IndexHNSWFlat(16, 8, faiss.METRIC_INNER_PRODUCT)
+    index.add(x)
+    client = _client(Session(index, vectors=x))
+    body = client.post("/api/trace/hnsw", json={"query": {"vector": x[3].tolist()}, "k": 5}).json()
+    assert body["higher_is_closer"] is True
+    sims = [r["distance"] for r in body["results"]]
+    assert sims == sorted(sims, reverse=True)
+    assert sims[0] == pytest.approx(1.0, abs=1e-4)  # the vector itself
+    assert body["overlap_with_faiss"] == 1.0
+
+
+def test_trace_hnsw_through_idmap() -> None:
+    x = np.random.default_rng(1).standard_normal((800, 16)).astype(np.float32)
+    index = faiss.IndexIDMap(faiss.IndexHNSWFlat(16, 8))
+    index.add_with_ids(x, np.arange(800, dtype=np.int64) * 4 + 100)
+    client = _client(Session(index, vectors=x, ids=np.arange(800, dtype=np.int64) * 4 + 100))
+    body = client.post("/api/trace/hnsw", json={"query": {"id": 104}, "k": 5}).json()
+    assert all(r["id"] >= 100 and (r["id"] - 100) % 4 == 0 for r in body["results"])
+    assert 104 not in [r["id"] for r in body["results"]]
+    assert body["overlap_with_faiss"] == 1.0

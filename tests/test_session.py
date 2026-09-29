@@ -262,3 +262,15 @@ def test_sweep_job_validation(synthetic) -> None:
         s.sweep_job(values=[NLIST + 1])
     with pytest.raises(ValueError, match=">= 1"):
         s.sweep_job(k=0)
+
+
+def test_hnsw_layout_on_fresh_session_does_not_deadlock(synthetic) -> None:
+    # hnsw_layout waits for the PCA job, whose thread needs other lazy values (source).
+    # With one session-wide lock this deadlocked; run it in a thread with a timeout.
+    s = Session(synthetic["hnsw_flat"])
+    out = {}
+    t = threading.Thread(target=lambda: out.setdefault("xy", s.hnsw_layout()), daemon=True)
+    t.start()
+    t.join(30)
+    assert not t.is_alive(), "hnsw_layout deadlocked"
+    assert out["xy"].shape == (N, 2)

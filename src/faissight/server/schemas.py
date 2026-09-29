@@ -255,3 +255,86 @@ class SweepJobResponse(BaseModel):
     message: str
     error: str | None = None
     result: SweepResultOut | None = None
+
+
+# --- HNSW --------------------------------------------------------------------------------
+
+
+class HnswLevelStats(BaseModel):
+    level: int
+    n_nodes: int
+    max_links: int
+    degree_mean: float
+    degree_min: int
+    degree_max: int
+    degree_hist: list[int]
+
+
+class HnswStatsResponse(BaseModel):
+    entry_point: int
+    max_level: int
+    m: int
+    ef_search: int
+    ef_construction: int
+    levels: list[HnswLevelStats]
+    """Top level first."""
+
+
+class HnswGraphResponse(BaseModel):
+    level: int
+    n_level_nodes: int
+    sampled: bool
+    ids: list[int]
+    x: list[float]
+    y: list[float]
+    top_levels: list[int]
+    edges_src: list[int]
+    """Indices into ``ids``; each undirected pair appears once."""
+    edges_dst: list[int]
+
+
+class HnswVisitOut(BaseModel):
+    node: int
+    distance: float
+    accepted: bool
+
+
+class HnswStepOut(BaseModel):
+    expanded: int
+    expanded_distance: float
+    visits: list[HnswVisitOut]
+
+
+class HnswLevelTrace(BaseModel):
+    level: int
+    entry: int
+    steps: list[HnswStepOut]
+
+
+class HnswTraceNeighbour(BaseModel):
+    rank: int
+    id: int
+    distance: float
+    outcome: Literal["FOUND", "VISITED_NOT_KEPT", "NOT_REACHED"]
+    top_level: int
+    snippet: dict[str, str] | None = None
+
+
+class HnswTraceResponse(BaseModel):
+    metric: str
+    higher_is_closer: bool
+    ef_search: int
+    k: int
+    entry_point: int
+    max_level: int
+    levels: list[HnswLevelTrace]
+    """Top level first; level 0 last."""
+    results: list[ResultRow]
+    faiss_ids: list[int]
+    """What ``index.search`` itself returned, for checking the reconstruction."""
+    overlap_with_faiss: float
+    truth: list[HnswTraceNeighbour] | None = None
+    recall: float | None = None
+    nodes: dict[str, list[float]]
+    """Layout for every node in the trace: ``ids``, ``x``, ``y``, ``top_levels``."""
+    query_xy: list[float] | None = None

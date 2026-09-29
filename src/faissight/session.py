@@ -14,7 +14,8 @@ from typing import Any, TypeVar
 import numpy as np
 import numpy.typing as npt
 
-from faissight.core import ivf
+from faissight.core import hnsw as hnsw_mod
+from faissight.core import hnsw_trace, ivf
 from faissight.core.embed import (
     Embedder,
     EmbedderUnavailableError,
@@ -115,6 +116,7 @@ class Session:
         self._disk_cache = disk_cache
         self._lock = threading.RLock()
         self._lazy: dict[str, Any] = {}
+        self._key_locks: dict[str, threading.RLock] = {}
 
         self._raw: VectorSource | None = None
         if vectors is not None:
@@ -159,7 +161,14 @@ class Session:
     # --- lazily computed state ------------------------------------------------------------
 
     def _once(self, name: str, fn: Callable[[], T]) -> T:
+        """Compute ``fn()`` once per ``name``, thread-safely.
+
+        Each name has its own lock, so a computation that waits on a background job (which
+        itself needs other lazy values) can't deadlock the session.
+        """
         with self._lock:
+            key_lock = self._key_locks.setdefault(name, threading.RLock())
+        with key_lock:
             if name not in self._lazy:
                 self._lazy[name] = fn()
             value: T = self._lazy[name]
@@ -313,6 +322,40 @@ class Session:
             ref = self._once(key, lambda: core_vectors(self.li, self.source, proj.ids))
         placed: npt.NDArray[np.float32] = place_points(proj, x_core, ref)[0]
         return placed
+
+    # --- HNSW -----------------------------------------------------------------------------
+
+    @property
+    def hnsw_graph(self) -> hnsw_mod.HnswGraph:
+        return self._once("hnsw_graph", lambda: hnsw_mod.extract_graph(self.li))
+
+    @property
+    def hnsw_vectors(self) -> npt.NDArray[np.float32]:
+        """Core-space vector of every HNSW node, by internal id."""
+        return self._once("hnsw_vectors", lambda: hnsw_trace.storage_vectors(self.li))
+
+    def hnsw_layout(self) -> npt.NDArray[np.float32]:
+        """2-D position of every HNSW node, from the session's PCA projection."""
+
+        def compute() -> npt.NDArray[np.float32]:
+            job = self.projection_job(ProjectionMethod.PCA, 2)
+            job.wait()
+            if job.error is not None:
+                raise job.error
+            assert job.result is not None
+            assert job.result.pca is not None
+            return job.result.pca.transform(self.hnsw_vectors)
+
+        return self._once("hnsw_layout", compute)
+
+    def hnsw_trace(
+        self, vector: npt.ArrayLike, k: int, ef_search: int | None = None
+    ) -> hnsw_trace.HnswTrace:
+        if not self.li.kind.is_hnsw:
+            raise ValueError("HNSW traces need an HNSW index.")
+        return hnsw_trace.trace_for_index(
+            self.li, self.hnsw_graph, self.hnsw_vectors, vector, k, ef_search
+        )
 
     # --- sweeps ---------------------------------------------------------------------------
 
