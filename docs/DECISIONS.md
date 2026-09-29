@@ -33,3 +33,7 @@ One line per non-obvious technical decision.
 - Session caches are computed on first use under an `RLock`. Building an IVF direct map during reconstruction is safe alongside searches: IVF search never reads the direct map, and building it only reads the inverted lists.
 - A `--embedder` model name loads in a background job at startup (importing sentence-transformers takes ~15 s); the first text query waits for it. Query embeddings are normalised iff the raw vectors are unit-norm (or, without raw vectors, iff the metric is IP), unless overridden.
 - The session resolves its cache directory at construction, not in the background thread, so env changes can't redirect a running job (tests caught stray writes to ~/.cache).
+- Projection responses are columnar (`ids`, `x`, `y`, `z`, `list_nos`) with coordinates rounded to 4 decimals: smaller JSON than `[[x, y], ...]` and maps directly onto deck.gl attributes.
+- `/api/search` takes an optional `projection: {method, dims}`; if that projection is ready, the response includes the query's coordinates. The UI can't place text queries itself, since it never sees vectors.
+- Unknown `/api/*` paths return JSON 404s; all other unknown paths fall back to `index.html` for client-side routing. Without a built frontend, `/` serves a short "run npm run build" page.
+- OpenAPI docs are served at `/api/docs` so they don't collide with SPA routes.
