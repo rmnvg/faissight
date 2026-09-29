@@ -55,3 +55,6 @@ One line per non-obvious technical decision.
 - Vitest (approved) covers the frontend's pure logic (`lib/*.test.ts`); CI runs typecheck, oxlint, Vitest and the build.
 - Playwright (approved) runs one smoke spec (overview, query explorer, tuner) against `faissight serve` on a 2k synthetic index, in its own CI job. Vitest is scoped to `src/**/*.test.ts` so it never picks up the Playwright specs.
 - `faissight serve`'s port pre-check sets `SO_REUSEADDR` like uvicorn: a just-closed port in TIME_WAIT counts as free, a live listener does not. Without it, quick restarts failed with "port in use".
+- `Viewer` binds its own listening socket (port 0 = OS-chosen) and hands it to `uvicorn.Server.run(sockets=...)` in a daemon thread: no check-then-bind race, and uvicorn skips signal handling off the main thread, so it's safe inside a notebook kernel.
+- `launch()` opens a browser only outside notebooks, and never when `FAISSIGHT_NO_BROWSER=1` (CI, scripts). In notebooks, displaying the viewer embeds an iframe; in Colab it uses `serve_kernel_port_as_iframe`, since Colab can't reach the kernel's localhost. `FAISSIGHT_PROXY_URL` (e.g. `/proxy/{port}/`) supports jupyter-server-proxy on JupyterHub; the UI's relative URLs make that work.
+- IPython isn't a dependency: notebook detection reads `sys.modules`, and `IPython.display` is imported only inside `_ipython_display_`.
