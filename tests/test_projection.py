@@ -188,6 +188,21 @@ def test_cache_hit_skips_fitting(ivf_flat, tmp_path, monkeypatch) -> None:
     np.testing.assert_array_equal(first.pca.components, second.pca.components)
 
 
+def test_cache_hit_takes_list_nos_from_the_request(ivf_flat, tmp_path) -> None:
+    li, src, a = ivf_flat
+    cache = P.ProjectionCache("x", root=tmp_path)
+    # Every point fits, so the sample (and cache key) is the same with or without assignments.
+    without = P.compute_projection(li, src, cache=cache)
+    assert without.list_nos is None
+    with_lists = P.compute_projection(li, src, assignments=a, cache=cache)
+    assert len(list(cache.dir.glob("*.npz"))) == 1  # served from the cache
+    np.testing.assert_array_equal(with_lists.coords, without.coords)
+    np.testing.assert_array_equal(with_lists.list_nos, a.lookup(with_lists.ids))
+    cached = P.cached_projection(li, src, cache, method="pca", dims=2, assignments=a)
+    np.testing.assert_array_equal(cached.list_nos, with_lists.list_nos)
+    assert P.compute_projection(li, src, cache=cache).list_nos is None
+
+
 def test_cache_key_depends_on_inputs(synthetic, x, tmp_path) -> None:
     li = load_index(synthetic["ivf_pq"])
     cache = P.ProjectionCache("abc", root=tmp_path)

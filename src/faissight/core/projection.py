@@ -11,7 +11,7 @@ import os
 import tempfile
 import warnings
 from collections.abc import Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from enum import Enum
 from pathlib import Path
 from typing import Any
@@ -199,8 +199,18 @@ def cached_projection(
     assignments: Assignments | None = None,
 ) -> Projection | None:
     """The projection ``compute_projection`` would load from ``cache``, without computing."""
-    *_, x = _sample(li, source, max_points, seed, assignments)
-    return cache.load(cache.key(ProjectionMethod(method), dims, max_points, seed, x))
+    list_nos_all, rows, _, x = _sample(li, source, max_points, seed, assignments)
+    hit = cache.load(cache.key(ProjectionMethod(method), dims, max_points, seed, x))
+    return _with_list_nos(hit, list_nos_all, rows) if hit is not None else None
+
+
+def _with_list_nos(proj: Projection, list_nos_all: IntArray | None, rows: IntArray) -> Projection:
+    """Per-point IVF lists come from this request's assignments, not the cache file.
+
+    The key covers the sampled vectors, not whether assignments were given, so the same
+    coordinates can be cached with or without list numbers; they're cheap to rebuild.
+    """
+    return replace(proj, list_nos=list_nos_all[rows] if list_nos_all is not None else None)
 
 
 def compute_projection(
@@ -234,7 +244,7 @@ def compute_projection(
         hit = cache.load(key)
         if hit is not None:
             report(1.0, "Loaded from cache")
-            return hit
+            return _with_list_nos(hit, list_nos_all, rows)
 
     cents = centroids(li) if li.ivf is not None else None
     report(0.1, f"Fitting {method.value.upper()} on {len(ids):,} points")
