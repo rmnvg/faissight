@@ -24,6 +24,10 @@ uv run ruff check . && uv run ruff format --check .
 uv run mypy                       # strict on faissight.core
 uv run faissight --version
 
+# CI also runs Python 3.10 with older numpy (2.2), whose stubs are stricter; check it in a side env:
+UV_PROJECT_ENVIRONMENT=/tmp/faissight-py310 UV_PYTHON=3.10 uv sync --all-extras --locked
+UV_PROJECT_ENVIRONMENT=/tmp/faissight-py310 UV_PYTHON=3.10 uv run mypy
+
 cd frontend && npm install && npm run build   # builds into src/faissight/static
 uv build                          # wheel + sdist (build the frontend first)
 ```
