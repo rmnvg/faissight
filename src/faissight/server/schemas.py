@@ -266,11 +266,24 @@ class SweepRequest(BaseModel):
     seed: int = Field(0, ge=0, le=2**32 - 1)
 
 
+class WorstQueryOut(BaseModel):
+    query_no: int
+    id: UserId | None
+    """The query's own stored id (sampled queries); None for given queries."""
+    recall: float
+
+
 class SweepPointOut(BaseModel):
     value: int
     recall: float
     latency_mean_ms: float
     latency_p95_ms: float
+    recall_ci_low: float | None
+    recall_ci_high: float | None
+    """Approximate 95% interval for the mean recall."""
+    recall_distribution: list[tuple[float, int]]
+    """``(recall, n_queries)`` pairs, lowest recall first."""
+    worst_queries: list[WorstQueryOut]
 
 
 class SweepResultOut(BaseModel):

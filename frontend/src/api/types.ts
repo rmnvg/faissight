@@ -191,11 +191,26 @@ export interface MetadataRow {
 
 export type SweepParam = 'nprobe' | 'efSearch'
 
+export interface WorstQuery {
+  /** Row in the query set. */
+  query_no: number
+  /** The query's own stored id (sampled queries); null for given queries. */
+  id: UserId | null
+  recall: number
+}
+
 export interface SweepPoint {
   value: number
   recall: number
   latency_mean_ms: number
   latency_p95_ms: number
+  /** Approximate 95% interval for the mean recall. */
+  recall_ci_low: number | null
+  recall_ci_high: number | null
+  /** Exact per-query recall distribution as [recall, n_queries], lowest recall first. */
+  recall_distribution: [number, number][]
+  /** Lowest-recall queries, worst first. */
+  worst_queries: WorstQuery[]
 }
 
 export interface SweepResult {

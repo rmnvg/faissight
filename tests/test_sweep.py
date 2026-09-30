@@ -259,3 +259,67 @@ def test_invalid_measurement_settings(ivf_setup, kwargs) -> None:
     li, _, _, qs, truth = ivf_setup
     with pytest.raises(ValueError, match="repeats"):
         W.sweep(li, qs, truth, **kwargs)
+
+
+def test_sweep_recall_diagnostics(ivf_setup) -> None:
+    li, _, _, qs, truth = ivf_setup
+    res = W.sweep(li, qs, truth, values=[1, NLIST], k=K)
+    for p in res.points:
+        assert sum(n for _, n in p.recall_distribution) == len(qs)
+        mean = sum(r * n for r, n in p.recall_distribution) / len(qs)
+        assert mean == pytest.approx(p.recall, abs=1e-6)
+        assert p.recall_ci_low is not None
+        assert p.recall_ci_high is not None
+        assert 0.0 <= p.recall_ci_low <= p.recall <= p.recall_ci_high <= 1.0
+        recalls = [w.recall for w in p.worst_queries]
+        assert len(recalls) == min(W.N_WORST_QUERIES, len(qs))
+        assert recalls == sorted(recalls)
+        assert recalls[0] == p.recall_distribution[0][0]
+        # Sampled queries carry their own stored id, so the UI can open them.
+        assert qs.exclude_ids is not None
+        assert all(w.id == int(qs.exclude_ids[w.query_no]) for w in p.worst_queries)
+    # nprobe=1 misses neighbours; the interval is non-degenerate.
+    assert res.points[0].recall_ci_low < res.points[0].recall_ci_high
+
+
+def test_summarize_recalls_given_queries_and_single_query() -> None:
+    low, high, dist, worst = W.summarize_recalls(np.array([1.0, 0.5, 1.0, 0.5, 0.0]), None)
+    assert dist == [(0.0, 1), (0.5, 2), (1.0, 2)]
+    assert [(w.query_no, w.id, w.recall) for w in worst[:3]] == [
+        (4, None, 0.0),
+        (1, None, 0.5),
+        (3, None, 0.5),
+    ]
+    assert 0.0 <= low < 0.6 < high <= 1.0
+    # One query says nothing about the mean's uncertainty.
+    assert W.summarize_recalls(np.array([0.8]), np.array([7]))[:2] == (0.0, 1.0)
+    assert W.summarize_recalls(np.array([0.8]), np.array([7]))[3][0].id == 7
+
+
+def _point(value: int, recall: float, latency: float, ci_low: float | None = None) -> W.SweepPoint:
+    return W.SweepPoint(value, recall, latency, latency * 2, recall_ci_low=ci_low)
+
+
+def test_recommend_fastest_and_confident() -> None:
+    pts = [
+        _point(4, 0.93, 0.1, 0.90),
+        _point(8, 0.96, 0.3, 0.94),  # smallest meeting 0.95
+        _point(16, 0.98, 0.2, 0.97),  # measured faster than 8 (noise), meets it confidently
+        _point(32, 0.99, 0.5, 0.985),
+    ]
+    res = W.SweepResult(W.SweepParam.NPROBE, 10, 100, "sampled", False, pts)
+    assert res.recommend(0.95).value == 8
+    assert res.fastest(0.95).value == 16
+    assert res.recommend(0.95, confident=True).value == 16
+    assert res.recommend(0.999) is None
+    assert res.fastest(0.999) is None
+    # Without an interval (older results), confident falls back to the mean.
+    legacy = W.SweepResult(W.SweepParam.NPROBE, 10, 5, "sampled", False, [_point(2, 0.96, 0.1)])
+    assert legacy.recommend(0.95, confident=True).value == 2
+
+
+def test_fraction_below() -> None:
+    p = W.SweepPoint(1, 0.8, 0.1, 0.2, recall_distribution=[(0.5, 1), (0.9, 2), (1.0, 1)])
+    assert p.fraction_below(0.9) == 0.25
+    assert p.fraction_below(0.95) == 0.75
+    assert W.SweepPoint(1, 0.8, 0.1, 0.2).fraction_below(0.9) is None

@@ -319,7 +319,18 @@ def test_sweep_json(synthetic) -> None:
     assert [p["value"] for p in body["points"]] == [1, 16]
     assert body["recommended"] == 16 or body["points"][0]["recall"] >= 0.99
     assert body["truth_source"] == "reconstructed"
-    assert set(body["points"][0]) == {"value", "recall", "latency_mean_ms", "latency_p95_ms"}
+    assert set(body["points"][0]) == {
+        "value",
+        "recall",
+        "latency_mean_ms",
+        "latency_p95_ms",
+        "recall_ci_low",
+        "recall_ci_high",
+        "recall_distribution",
+        "worst_queries",
+    }
+    assert set(body["points"][0]["worst_queries"][0]) == {"query_no", "id", "recall"}
+    assert "fastest_meeting_target" in body
 
 
 def test_sweep_given_queries(synthetic) -> None:

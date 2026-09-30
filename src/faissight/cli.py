@@ -368,6 +368,7 @@ def sweep(
     result = job.result
     assert result is not None
     rec = result.recommend(target)
+    fastest = result.fastest(target)
 
     if as_json:
         typer.echo(
@@ -385,6 +386,7 @@ def sweep(
                     "query_seed": result.query_seed,
                     "environment": result.environment,
                     "recommended": rec.value if rec else None,
+                    "fastest_meeting_target": fastest.value if fastest else None,
                     "points": [asdict(p) for p in result.points],
                 },
                 indent=2,
@@ -410,6 +412,8 @@ def _print_sweep(result: SweepResult, rec: SweepPoint | None, target: float) -> 
     table = Table()
     table.add_column(result.param.value, justify="right")
     table.add_column(f"recall@{result.k}", justify="right")
+    table.add_column("95% interval", justify="right")
+    table.add_column(f"queries < {target:g}", justify="right")
     table.add_column("mean ms", justify="right")
     table.add_column("p95 ms", justify="right")
     table.add_column("")
@@ -419,9 +423,16 @@ def _print_sweep(result: SweepResult, rec: SweepPoint | None, target: float) -> 
             if rec is not None and p.value == rec.value
             else ("meets target" if p.recall >= target else "")
         )
+        below = p.fraction_below(target)
         table.add_row(
             str(p.value),
             f"{p.recall:.3f}",
+            (
+                f"{p.recall_ci_low:.3f}-{p.recall_ci_high:.3f}"
+                if p.recall_ci_low is not None and p.recall_ci_high is not None
+                else ""
+            ),
+            f"{below:.0%}" if below is not None else "",
             f"{p.latency_mean_ms:.3f}",
             f"{p.latency_p95_ms:.3f}",
             mark,
@@ -442,9 +453,23 @@ def _print_sweep(result: SweepResult, rec: SweepPoint | None, target: float) -> 
         else ""
     )
     console.print(
-        f"Recommended [bold]{result.param.value}={rec.value}[/]: recall {rec.recall:.3f} at "
-        f"{rec.latency_mean_ms:.3f} ms/query{faster}."
+        f"Recommended [bold]{result.param.value}={rec.value}[/] (smallest value meeting the "
+        f"target): recall {rec.recall:.3f} at {rec.latency_mean_ms:.3f} ms/query{faster}."
     )
+    fastest = result.fastest(target)
+    if fastest is not None and fastest.value != rec.value:
+        console.print(
+            f"Fastest measured: {result.param.value}={fastest.value} at "
+            f"{fastest.latency_mean_ms:.3f} ms/query. A larger value measuring faster is "
+            "usually timing noise; rerun with more --repeats before relying on it."
+        )
+    worst = rec.worst_queries[0] if rec.worst_queries else None
+    if worst is not None and worst.recall < target:
+        who = f"id {worst.id}" if worst.id is not None else f"query #{worst.query_no}"
+        console.print(
+            f"Worst query there: {who} with recall {worst.recall:.2f}; "
+            f"{rec.fraction_below(target) or 0:.0%} of queries are below the target."
+        )
 
 
 @app.command()

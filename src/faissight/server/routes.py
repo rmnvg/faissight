@@ -414,6 +414,13 @@ def _sweep_response(job_id: str, job: Job[SweepResult], session: Session) -> JSO
                     recall=p.recall,
                     latency_mean_ms=p.latency_mean_ms,
                     latency_p95_ms=p.latency_p95_ms,
+                    recall_ci_low=p.recall_ci_low,
+                    recall_ci_high=p.recall_ci_high,
+                    recall_distribution=p.recall_distribution,
+                    worst_queries=[
+                        S.WorstQueryOut(query_no=w.query_no, id=w.id, recall=w.recall)
+                        for w in p.worst_queries
+                    ],
                 )
                 for p in r.points
             ],

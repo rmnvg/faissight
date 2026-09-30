@@ -1,7 +1,9 @@
 import { useMutation } from '@tanstack/react-query'
 import { useState, type ReactNode } from 'react'
 import {
+  Area,
   CartesianGrid,
+  ComposedChart,
   Legend,
   Line,
   LineChart,
@@ -17,10 +19,20 @@ import {
 import { api } from '../api/client'
 import { useSweep } from '../api/hooks'
 import type { Info, SweepParam, SweepPoint, SweepResult } from '../api/types'
-import { Banner, Card, EmptyState, Progress, StatTile } from '../components/ui'
+import { Banner, Card, EmptyState, Progress, Segmented, StatTile } from '../components/ui'
 import { downloadCSV, downloadJSON } from '../lib/exportData'
 import { navigate } from '../lib/route'
-import { codeSnippet, parseValues, prefersLogAxis, recommend, speedup } from '../lib/tuner'
+import {
+  codeSnippet,
+  fastest,
+  fractionBelow,
+  meets,
+  parseValues,
+  prefersLogAxis,
+  recommend,
+  speedup,
+} from '../lib/tuner'
+import { RecallBreakdown, WorstQueries } from './TunerDiagnostics'
 
 const AXIS = { fill: 'var(--muted)', fontSize: 11 }
 
@@ -218,15 +230,28 @@ function Results({
   setTarget: (t: number) => void
   hasRefine: boolean
 }) {
+  const [confident, setConfident] = useState(false)
+  const [focusValue, setFocusValue] = useState<number | null>(null)
   const pts = result.points
-  const rec = recommend(pts, target)
+  const rec = recommend(pts, target, confident)
+  const quickest = fastest(pts, target, confident)
   const fast = rec ? speedup(pts, rec) : null
   const best = pts.reduce((a, b) => (b.recall > a.recall ? b : a))
   const pareto = new Set(result.pareto_values)
   const values = pts.map((p) => p.value)
   const logX = prefersLogAxis(values)
   const snippet = rec ? codeSnippet(result.param, rec.value, hasRefine) : null
-  const recallFloor = Math.max(0, Math.min(Math.floor(Math.min(...pts.map((p) => p.recall)) * 10) / 10, target - 0.05))
+  const recallFloor = Math.max(
+    0,
+    Math.min(Math.floor(Math.min(...pts.map((p) => p.recall_ci_low ?? p.recall)) * 10) / 10, target - 0.05),
+  )
+  // Recharts draws a band from a [low, high] pair.
+  const chartPts = pts.map((p) => ({
+    ...p,
+    ci: p.recall_ci_low !== null && p.recall_ci_high !== null ? [p.recall_ci_low, p.recall_ci_high] : null,
+  }))
+  const focus = pts.find((p) => p.value === focusValue) ?? rec ?? best
+  const hasDiagnostics = pts.some((p) => p.recall_distribution.length > 0)
 
   return (
     <>
@@ -255,6 +280,22 @@ function Results({
             {result.query_origin === 'sampled' && ' (each excludes itself)'}
           </span>
         </label>
+        <div className="mt-3 flex flex-wrap items-center gap-3 text-sm text-ink-2">
+          Meets the target when
+          <Segmented
+            label="Recommendation rule"
+            value={confident ? 'confident' : 'mean'}
+            onChange={(v) => setConfident(v === 'confident')}
+            options={[
+              { value: 'mean', label: 'mean recall ≥ target' },
+              {
+                value: 'confident',
+                label: '95% lower bound ≥ target',
+                title: 'Guards against a small query set overstating recall',
+              },
+            ]}
+          />
+        </div>
       </Card>
 
       <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
@@ -264,14 +305,20 @@ function Results({
           tone={rec ? 'good' : 'bad'}
           caption={
             rec
-              ? 'smallest value meeting the target'
+              ? `smallest value ${confident ? 'confidently ' : ''}meeting the target`
               : `best was ${best.recall.toFixed(3)} at ${best.value}; try larger values`
           }
         />
         <StatTile
           label={`Recall@${result.k} there`}
           value={rec ? rec.recall.toFixed(3) : '—'}
-          caption={rec ? `target ${target.toFixed(2)}` : undefined}
+          caption={
+            rec
+              ? rec.recall_ci_low !== null && rec.recall_ci_high !== null
+                ? `95% interval ${rec.recall_ci_low.toFixed(3)}–${rec.recall_ci_high.toFixed(3)}`
+                : `target ${target.toFixed(2)}`
+              : undefined
+          }
         />
         <StatTile
           label="Latency there"
@@ -284,12 +331,23 @@ function Results({
           caption={fast ? `vs ${result.param} ${Math.max(...values)}` : 'already the largest value'}
         />
       </div>
+      {rec && quickest && quickest.value !== rec.value && (
+        <Banner>
+          Fastest measured setting that meets the target: <strong>{result.param} {quickest.value}</strong> at{' '}
+          {quickest.latency_mean_ms.toPrecision(3)} ms, vs {rec.latency_mean_ms.toPrecision(3)} ms for{' '}
+          {rec.value} ({((1 - quickest.latency_mean_ms / rec.latency_mean_ms) * 100).toFixed(0)}% faster). A larger
+          value measuring faster is usually timing noise; rerun with more timing repeats before preferring it.
+        </Banner>
+      )}
 
       <div className="grid gap-4 lg:grid-cols-3">
-        <Card title={`Recall@${result.k} by ${result.param}`} subtitle="Mean over the query set">
+        <Card
+          title={`Recall@${result.k} by ${result.param}`}
+          subtitle="Mean over the query set; band = approximate 95% interval"
+        >
           <div className="h-60">
             <ResponsiveContainer width="100%" height="100%">
-              <LineChart data={pts} margin={{ top: 12, right: 12, bottom: 20, left: 0 }}>
+              <ComposedChart data={chartPts} margin={{ top: 12, right: 12, bottom: 20, left: 0 }}>
                 <CartesianGrid stroke="var(--grid)" vertical={false} />
                 <XAxis
                   dataKey="value"
@@ -317,6 +375,14 @@ function Results({
                   label={{ value: `target ${target.toFixed(2)}`, position: 'insideBottomRight', ...AXIS }}
                 />
                 {rec && <ReferenceLine x={rec.value} stroke="var(--good)" />}
+                <Area
+                  dataKey="ci"
+                  stroke="none"
+                  fill="var(--series-1)"
+                  fillOpacity={0.15}
+                  isAnimationActive={false}
+                  activeDot={false}
+                />
                 <Line
                   dataKey="recall"
                   stroke="var(--series-1)"
@@ -324,7 +390,7 @@ function Results({
                   dot={{ r: 4, fill: 'var(--series-1)', stroke: 'var(--surface)', strokeWidth: 2 }}
                   isAnimationActive={false}
                 />
-              </LineChart>
+              </ComposedChart>
             </ResponsiveContainer>
           </div>
         </Card>
@@ -456,21 +522,48 @@ function Results({
         </Card>
       </div>
 
+      {hasDiagnostics && (
+        <div className="grid gap-4 lg:grid-cols-2">
+          <RecallBreakdown point={focus} param={result.param} k={result.k} target={target} />
+          <WorstQueries point={focus} param={result.param} k={result.k} target={target} />
+        </div>
+      )}
+
       <div className="grid gap-4 xl:grid-cols-5">
         <Card
           className="xl:col-span-3"
           title="All measurements"
+          subtitle={hasDiagnostics ? 'Click a row to see its per-query recall and worst queries' : undefined}
           actions={
             <div className="flex gap-2 print:hidden">
               <button
                 className="rounded-md border border-line px-2.5 py-1 text-xs text-ink-2 hover:text-ink"
-                onClick={() => downloadCSV(`faissight-sweep-${result.param}.csv`, pts as never)}
+                onClick={() =>
+                  downloadCSV(
+                    `faissight-sweep-${result.param}.csv`,
+                    pts.map((p) => ({
+                      value: p.value,
+                      recall: p.recall,
+                      recall_ci_low: p.recall_ci_low,
+                      recall_ci_high: p.recall_ci_high,
+                      fraction_below_target: fractionBelow(p, target),
+                      latency_mean_ms: p.latency_mean_ms,
+                      latency_p95_ms: p.latency_p95_ms,
+                    })) as never,
+                  )
+                }
               >
                 CSV
               </button>
               <button
                 className="rounded-md border border-line px-2.5 py-1 text-xs text-ink-2 hover:text-ink"
-                onClick={() => downloadJSON(`faissight-sweep-${result.param}.json`, { ...result, target_recall: target, recommended: rec?.value ?? null })}
+                onClick={() => downloadJSON(`faissight-sweep-${result.param}.json`, {
+                    ...result,
+                    target_recall: target,
+                    recommendation_rule: confident ? 'ci_low' : 'mean',
+                    recommended: rec?.value ?? null,
+                    fastest_meeting_target: quickest?.value ?? null,
+                  })}
               >
                 JSON
               </button>
@@ -482,29 +575,50 @@ function Results({
               <tr>
                 <th className="py-1 pr-3 font-normal">{result.param}</th>
                 <th className="py-1 pr-3 text-right font-normal">Recall@{result.k}</th>
+                <th className="py-1 pr-3 text-right font-normal whitespace-nowrap">95% interval</th>
+                <th className="py-1 pr-3 text-right font-normal">Queries &lt; target</th>
                 <th className="py-1 pr-3 text-right font-normal">Mean ms</th>
                 <th className="py-1 pr-3 text-right font-normal">p95 ms</th>
                 <th className="py-1 font-normal">Notes</th>
               </tr>
             </thead>
             <tbody>
-              {pts.map((p) => (
-                <tr key={p.value} className={`border-t border-line ${rec?.value === p.value ? 'bg-accent-wash' : ''}`}>
-                  <td className="tabular py-1.5 pr-3 text-ink">{p.value}</td>
-                  <td className="tabular py-1.5 pr-3 text-right text-ink">{p.recall.toFixed(3)}</td>
-                  <td className="tabular py-1.5 pr-3 text-right text-ink-2">{p.latency_mean_ms.toFixed(3)}</td>
-                  <td className="tabular py-1.5 pr-3 text-right text-ink-2">{p.latency_p95_ms.toFixed(3)}</td>
-                  <td className="py-1.5 text-xs text-ink-2">
-                    {rec?.value === p.value && (
-                      <span className="mr-2 inline-flex items-center gap-1 text-ink">
-                        <span className="h-2 w-2 rounded-full bg-good" />✓ recommended
-                      </span>
-                    )}
-                    {p.recall >= target - 1e-9 ? 'meets target' : 'below target'}
-                    {pareto.has(p.value) && ' · Pareto-optimal'}
-                  </td>
-                </tr>
-              ))}
+              {pts.map((p) => {
+                const below = fractionBelow(p, target)
+                return (
+                  <tr
+                    key={p.value}
+                    onClick={hasDiagnostics ? () => setFocusValue(p.value) : undefined}
+                    title={hasDiagnostics ? 'Show per-query recall for this value' : undefined}
+                    className={`border-t border-line ${hasDiagnostics ? 'cursor-pointer hover:bg-surface-2' : ''} ${
+                      rec?.value === p.value ? 'bg-accent-wash' : ''
+                    } ${focus.value === p.value && hasDiagnostics ? 'outline outline-1 -outline-offset-1 outline-series-1' : ''}`}
+                  >
+                    <td className="tabular py-1.5 pr-3 text-ink">{p.value}</td>
+                    <td className="tabular py-1.5 pr-3 text-right text-ink">{p.recall.toFixed(3)}</td>
+                    <td className="tabular py-1.5 pr-3 text-right whitespace-nowrap text-ink-2">
+                      {p.recall_ci_low !== null && p.recall_ci_high !== null
+                        ? `${p.recall_ci_low.toFixed(3)}–${p.recall_ci_high.toFixed(3)}`
+                        : '—'}
+                    </td>
+                    <td className="tabular py-1.5 pr-3 text-right text-ink-2">
+                      {below === null ? '—' : `${(below * 100).toFixed(0)}%`}
+                    </td>
+                    <td className="tabular py-1.5 pr-3 text-right text-ink-2">{p.latency_mean_ms.toFixed(3)}</td>
+                    <td className="tabular py-1.5 pr-3 text-right text-ink-2">{p.latency_p95_ms.toFixed(3)}</td>
+                    <td className="py-1.5 text-xs text-ink-2">
+                      {rec?.value === p.value && (
+                        <span className="mr-2 inline-flex items-center gap-1 text-ink">
+                          <span className="h-2 w-2 rounded-full bg-good" />✓ recommended
+                        </span>
+                      )}
+                      {meets(p, target, confident) ? 'meets target' : 'below target'}
+                      {pareto.has(p.value) && ' · Pareto-optimal'}
+                      {quickest?.value === p.value && quickest.value !== rec?.value && ' · fastest measured'}
+                    </td>
+                  </tr>
+                )
+              })}
             </tbody>
           </table>
         </Card>

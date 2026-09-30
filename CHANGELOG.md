@@ -15,6 +15,10 @@ All notable changes to faissight are documented here. The format follows
 - Sweep cancellation in the Tuner and API, bounded background workers/queue, and bounded
   completed-job and query/ground-truth caches.
 - Release gates for tagged-commit CI and isolated installed-wheel smoke tests.
+- Tuner diagnostics: 95% recall intervals, exact per-query recall distributions, the worst
+  queries at each setting (linked to the Query Explorer), an optional "95% lower bound meets
+  the target" rule, and the fastest measured setting reported apart from the recommendation.
+  `faissight sweep` prints the interval and the share of queries below the target.
 
 ### Fixed
 

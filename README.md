@@ -59,7 +59,7 @@ report.recall, report.ivf_trace.min_nprobe_for_all
 | View | What it shows |
 |---|---|
 | **Query explorer** | Search by text, stored id or vector. Compares with exact ground truth and gives a reason for every missed neighbour: *cell not probed*, *quantization*, *transform* (PCA/OPQ), or *ranked out*, plus the smallest nprobe that finds them all. Shareable URLs, CSV/JSON export. |
-| **Tuner** | Recall@k and latency across nprobe or efSearch, the cheapest value for your target recall, and a copy-paste snippet to apply it. |
+| **Tuner** | Recall@k and latency across nprobe or efSearch, the cheapest value for your target recall (optionally with 95% confidence), per-query recall and the worst queries (one click to explain each), and a copy-paste snippet to apply it. |
 | **HNSW graph** | The layers of an HNSW graph and an animated, step-by-step replay of the search, showing which true neighbours were never reached. |
 | **Quantization** | How far PQ/SQ codes are from your raw vectors, the compression ratio, and how much they distort distances between near neighbours (the part that decides ranking). |
 | **Overview** | Inverted-list sizes, imbalance factor with a plain-English verdict, largest lists. |
@@ -126,6 +126,12 @@ Use `--repeats` and `--seed` (also available in the Tuner) to control the measur
 JSON exports include the query-set SHA-256, sampling seed, timing seed, repetition count,
 and Python/NumPy/FAISS and platform versions. Supplied `--queries` use the first
 `--n-queries` rows; the seed controls sampling only when queries are drawn from stored vectors.
+
+Each setting also reports an approximate 95% interval for mean recall, the exact per-query
+recall distribution (so "how many queries fall below the target" is known, not just the
+mean) and its lowest-recall queries. The recommendation is the *smallest* value meeting the
+target; when a larger value happens to measure faster, it is reported separately as the
+fastest measured setting, since that gap is usually timing noise.
 
 ```bash
 faissight compare exact.index compressed.index --vectors vectors.npy \

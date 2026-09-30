@@ -126,6 +126,22 @@ test('tuner: sweep and get a recommendation', async ({ page }) => {
   await expect(page.getByText('faiss.SearchParametersIVF(nprobe=')).toBeVisible()
 })
 
+test('tuner: per-query recall and worst queries lead to the explorer', async ({ page }) => {
+  await page.goto('/#/tuner')
+  await page.getByRole('button', { name: 'Run sweep' }).click()
+  await expect(page.getByText(/Per-query recall@10 at nprobe \d+/)).toBeVisible({ timeout: 20_000 })
+  // The smallest value misses neighbours on this data; inspect it from the table.
+  await page.locator('section', { hasText: 'All measurements' }).locator('tbody tr').first().click()
+  await expect(page.getByText('Worst queries at nprobe 1')).toBeVisible()
+  await page.getByRole('radio', { name: '95% lower bound ≥ target' }).click()
+  await expect(page.getByText('smallest value confidently meeting the target')).toBeVisible()
+  // The e2e server has no --queries, so worst queries are stored ids the explorer can open.
+  await page.getByRole('button', { name: 'Explain' }).first().click()
+  await expect(page).toHaveURL(/#\/query\?id=\d+&k=10&nprobe=1/)
+  await expect(page.getByRole('heading', { name: 'Query explorer' })).toBeVisible()
+  await expect(page.getByText('Recall@10', { exact: true })).toBeVisible()
+})
+
 test('hnsw graph: trace a search and see the layers and outcomes', async ({ page }) => {
   await page.goto('http://127.0.0.1:8798/#/hnsw?id=42&ef=16')
   await expect(page.getByText('Reconstructed trace.')).toBeVisible({ timeout: 20_000 })

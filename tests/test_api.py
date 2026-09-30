@@ -406,6 +406,12 @@ def test_sweep_flow(ivf_client) -> None:
     assert recalls == sorted(recalls)
     assert recalls[-1] == 1.0
     assert set(res["pareto_values"]) <= {1, 2, 4, 8, 16}
+    first = res["points"][0]
+    assert sum(n for _, n in first["recall_distribution"]) == 40
+    assert first["recall_ci_low"] <= first["recall"] <= first["recall_ci_high"]
+    # Given queries have no stored id to open in the explorer.
+    assert first["worst_queries"][0]["id"] is None
+    assert first["worst_queries"][0]["recall"] == first["recall_distribution"][0][0]
     # Same request -> same job, answered straight from the finished result.
     again = ivf_client.post("/api/sweep", json={"k": 10, "n_queries": 40})
     assert again.status_code == 200
@@ -418,6 +424,8 @@ def test_sweep_sampled_queries_hnsw(hnsw_client) -> None:
     res = body["result"]
     assert (res["param"], res["query_origin"]) == ("efSearch", "sampled")
     assert [p["value"] for p in res["points"]] == [16, 64]
+    worst = res["points"][0]["worst_queries"]
+    assert all(isinstance(w["id"], int) for w in worst)
 
 
 @pytest.mark.parametrize(
