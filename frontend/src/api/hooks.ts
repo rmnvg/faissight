@@ -90,3 +90,15 @@ export function useSweep(jobId: string | null) {
     refetchInterval: (q) => (q.state.data?.status === 'running' ? 400 : false),
   })
 }
+
+/** Poll an index comparison until it finishes. */
+export function useCompare(jobId: string | null) {
+  return useQuery({
+    queryKey: ['compare', jobId],
+    queryFn: ({ signal }) => api.compare(jobId as string, signal),
+    enabled: jobId !== null,
+    staleTime: Infinity,
+    retry: false,
+    refetchInterval: (q) => (q.state.data?.status === 'running' ? 400 : false),
+  })
+}

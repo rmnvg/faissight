@@ -1,5 +1,5 @@
 import { useMutation } from '@tanstack/react-query'
-import { useState, type ReactNode } from 'react'
+import { useState } from 'react'
 import {
   Area,
   CartesianGrid,
@@ -19,6 +19,7 @@ import {
 import { api } from '../api/client'
 import { useSweep } from '../api/hooks'
 import type { Info, SweepParam, SweepPoint, SweepResult } from '../api/types'
+import { Field, NumberInput } from '../components/form'
 import { Banner, Card, EmptyState, Progress, Segmented, StatTile } from '../components/ui'
 import { downloadCSV, downloadJSON } from '../lib/exportData'
 import { navigate } from '../lib/route'
@@ -176,46 +177,6 @@ export default function Tuner({ info, params }: { info: Info; params: URLSearchP
         <Results result={result} target={target} setTarget={setTarget} hasRefine={info.has_refine} />
       )}
     </div>
-  )
-}
-
-function Field({
-  label,
-  className = '',
-  children,
-}: {
-  label: string
-  className?: string
-  children: ReactNode
-}) {
-  return (
-    <label className={`flex flex-col gap-1 text-xs text-ink-2 ${className}`}>
-      {label}
-      {children}
-    </label>
-  )
-}
-
-function NumberInput({
-  value,
-  onChange,
-  min,
-  max,
-}: {
-  value: number
-  onChange: (v: number) => void
-  min: number
-  max: number
-}) {
-  return (
-    <input
-      type="number"
-      value={value}
-      min={min}
-      max={max}
-      onChange={(e) => onChange(Math.max(min, Math.min(max, Number(e.target.value) || min)))}
-      className="tabular rounded-lg border border-line bg-page px-3 py-2 text-sm text-ink outline-none focus:border-series-1"
-    />
   )
 }
 

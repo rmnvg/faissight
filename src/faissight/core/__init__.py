@@ -21,7 +21,7 @@ FAISS is imported lazily, so importing this package works without FAISS installe
 """
 
 from faissight.core._faiss import FaissNotInstalledError
-from faissight.core.comparison import ComparisonResult, compare_indexes
+from faissight.core.comparison import ComparisonResult, changed_queries, compare_indexes
 from faissight.core.embed import Embedder, EmbedderUnavailableError
 from faissight.core.ivf import (
     Assignments,
@@ -120,6 +120,7 @@ __all__ = [
     "WorstQuery",
     "assignments",
     "centroids",
+    "changed_queries",
     "compare_indexes",
     "compute_projection",
     "default_values",

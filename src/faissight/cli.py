@@ -210,6 +210,10 @@ def _serve_summary(session: Session, url: str) -> None:
         console.print(f"Embedder [cyan]{session.embedder_name}[/] is loading in the background.")
     if session.demo_limits is not None:
         console.print("[yellow]Demo mode:[/] read-only limits are on (k, sweeps, efSearch, UMAP).")
+    for c in session.candidates:
+        console.print(
+            f"Comparing with [cyan]{escape(c.name)}[/] ({c.li.kind.value}) in the Compare view."
+        )
     console.print(f"Serving on [bold link={url}]{url}[/]  (Ctrl+C to stop)")
 
 
@@ -258,6 +262,14 @@ def serve(
             help="Read-only public demo: cap k, sweeps and efSearch; UMAP only if precomputed.",
         ),
     ] = False,
+    compare: Annotated[
+        list[Path] | None,
+        typer.Option(
+            "--compare",
+            help="Another index over the same vectors to compare in the UI (repeatable; "
+            "needs --vectors).",
+        ),
+    ] = None,
 ) -> None:
     """Start the faissight web UI for a FAISS index."""
     problem = _bind_problem(host, port)
@@ -276,6 +288,7 @@ def serve(
                 disk_cache=not no_cache,
                 normalize_text=normalize_text,
                 demo_mode=demo_mode,
+                compare=list(compare or []),
             )
     except FaissNotInstalledError as e:
         raise _fail("FAISS is not installed.", e.hint) from e
@@ -598,4 +611,5 @@ def demo(
         normalize_text=True,
         no_cache=False,
         demo_mode=False,
+        compare=None,
     )

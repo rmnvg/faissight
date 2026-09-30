@@ -20,6 +20,7 @@ viewer.stop()  # shuts the server down and frees the port
 | `port` | a fixed port; by default a free one is chosen |
 | `open_browser` | force the browser on or off; by default it opens only outside notebooks |
 | `height` | iframe height in notebooks (default 800) |
+| `compare` | other indexes (`faiss.Index` or paths) over the same vectors, for the Compare view; needs `vectors` |
 
 Each call starts its own server on its own port, so you can compare two indexes side by
 side. The viewer also works as a context manager (`with faissight.launch(...) as v:`).

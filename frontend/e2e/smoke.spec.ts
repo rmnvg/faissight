@@ -142,6 +142,28 @@ test('tuner: per-query recall and worst queries lead to the explorer', async ({ 
   await expect(page.getByText('Recall@10', { exact: true })).toBeVisible()
 })
 
+test('compare: side-by-side recall, latency, size and changed neighbours', async ({ page }) => {
+  await page.goto('/')
+  await page.getByRole('button', { name: /Compare/ }).click()
+  await expect(page.getByRole('heading', { name: 'Compare' })).toBeVisible()
+  await page.getByLabel('nprobe (other)').fill('1')
+  await page.getByRole('button', { name: 'Compare', exact: true }).click()
+  await expect(page.getByText('ivf_pq.index vs ivf_flat.index:')).toBeVisible({ timeout: 20_000 })
+  await expect(page).toHaveURL(/#\/compare\?job=\w+&candidate=0/)
+  const side = page.locator('section', { hasText: 'Side by side' })
+  await expect(side.getByRole('cell', { name: 'IVF_PQ', exact: true })).toBeVisible()
+  await expect(side.getByText('p95 latency')).toBeVisible()
+  await expect(page.getByText(/Queries with different results/)).toBeVisible()
+  const changes = page.locator('section', { hasText: 'Changed neighbours' }).locator('tbody tr')
+  await expect(changes.first()).toBeVisible()
+  // A reload keeps the comparison and the settings it ran with.
+  await page.reload()
+  await expect(page.getByText('ivf_pq.index vs ivf_flat.index:')).toBeVisible()
+  await expect(page.getByLabel('nprobe (other)')).toHaveValue('1')
+  await changes.first().getByRole('button', { name: 'Explain' }).click()
+  await expect(page.getByRole('heading', { name: 'Query explorer' })).toBeVisible()
+})
+
 test('hnsw graph: trace a search and see the layers and outcomes', async ({ page }) => {
   await page.goto('http://127.0.0.1:8798/#/hnsw?id=42&ef=16')
   await expect(page.getByText('Reconstructed trace.')).toBeVisible({ timeout: 20_000 })

@@ -59,6 +59,7 @@ export function Sidebar({
       hint: 'Recall vs latency',
       enabled: supported && info?.sweep != null,
     },
+    { view: 'compare', label: 'Compare', hint: 'Choose between indexes', enabled: supported },
   ]
   return (
     <aside className="flex w-64 shrink-0 flex-col gap-4 overflow-auto border-r border-line bg-surface p-4 print:hidden">

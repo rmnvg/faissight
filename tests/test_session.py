@@ -322,3 +322,53 @@ def test_invalid_queries_rejected_at_ingestion(synthetic, bad) -> None:
     with pytest.raises(InputError) as error:
         Session(synthetic["ivf_flat"], queries=bad)
     assert error.value.code == "QUERY_MISMATCH"
+
+
+def test_compare_candidates_are_validated(synthetic) -> None:
+    s = Session(
+        synthetic["ivf_flat"],
+        vectors=synthetic["vectors"],
+        compare=[synthetic["ivf_pq"], synthetic["ivf_pq"]],
+        disk_cache=False,
+    )
+    # Duplicate file names stay distinguishable in the UI.
+    assert [c.name for c in s.candidates] == ["ivf_pq.index", "ivf_pq.index (2)"]
+    with pytest.raises(InputError, match="raw vectors") as e:
+        Session(synthetic["ivf_flat"], compare=[synthetic["ivf_pq"]])
+    assert e.value.code == "COMPARE_NEEDS_VECTORS"
+    with pytest.raises(InputError, match="IP; the main index has d=32, L2") as e:
+        Session(
+            synthetic["ivf_flat"], vectors=synthetic["vectors"], compare=[synthetic["ivf_flat_ip"]]
+        )
+    assert e.value.code == "COMPARE_MISMATCH"
+    # idmap_flat stores different ids for the same vectors.
+    with pytest.raises(InputError, match=r"idmap_flat\.index") as e:
+        Session(
+            synthetic["ivf_flat"], vectors=synthetic["vectors"], compare=[synthetic["idmap_flat"]]
+        )
+    assert e.value.code == "COMPARE_MISMATCH"
+
+
+def test_compare_job_reuses_sweep_ground_truth(synthetic, monkeypatch) -> None:
+    s = Session(
+        synthetic["ivf_flat"],
+        vectors=synthetic["vectors"],
+        compare=[synthetic["ivf_pq"]],
+        disk_cache=False,
+    )
+    _, job = s.sweep_job(values=[1], n_queries=15)
+    job.wait(30)
+    calls = []
+    original = s._sweep_data
+    monkeypatch.setattr(s, "_sweep_data", lambda *a: calls.append(a) or original(*a))
+    job_id, cjob = s.compare_job(n_queries=15, right_nprobe=2)
+    cjob.wait(30)
+    assert cjob.result is not None
+    assert cjob.result.right.params == {"nprobe": 2}
+    assert calls == [(15, 10, 0)]
+    assert s.get_compare_job(job_id) == (cjob, 0)
+    assert s.get_compare_job("nope") is None
+    with pytest.raises(ValueError, match="candidate"):
+        s.compare_job(candidate=1)
+    with pytest.raises(ValueError, match="--compare"):
+        Session(synthetic["ivf_flat"], vectors=synthetic["vectors"]).compare_job()

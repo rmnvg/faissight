@@ -4,9 +4,10 @@ import pytest
 from typer.testing import CliRunner
 
 from faissight.cli import app
-from faissight.core.comparison import compare_indexes
+from faissight.core.comparison import changed_queries, compare_indexes
 from faissight.core.loader import load_index
-from faissight.core.sweep import given_queries, sample_queries
+from faissight.core.search import GroundTruth
+from faissight.core.sweep import given_queries, ground_truth_ids, sample_queries
 from faissight.core.vectors import from_arrays, reconstruct_all
 
 
@@ -80,3 +81,32 @@ def test_compare_cli(synthetic) -> None:
     table = runner.invoke(app, args)
     assert table.exit_code == 0, table.output
     assert "Serialized bytes" in table.output
+
+
+def test_compare_reuses_truth_reports_progress_and_orders_changes(synthetic) -> None:
+    left, right = load_index(synthetic["flat_l2"]), load_index(synthetic["ivf_pq"])
+    source = from_arrays(left, np.load(synthetic["vectors"]))
+    queries = sample_queries(source, 40, seed=3)
+    truth = ground_truth_ids(GroundTruth(source, left.metric), queries, 10)
+    messages = []
+    result = compare_indexes(
+        left,
+        right,
+        source,
+        queries,
+        right_nprobe=1,
+        truth=truth,
+        progress=lambda frac, msg: messages.append((frac, msg)),
+    )
+    assert messages
+    assert all(0.0 <= f <= 1.0 for f, _ in messages)
+    assert not any("ground truth" in m for _, m in messages)  # truth was given
+    assert result.right.recall_ci_low <= result.right.recall <= result.right.recall_ci_high
+    assert [d.query_id for d in result.differences] == [int(i) for i in queries.exclude_ids]
+    changed = changed_queries(result)
+    assert changed
+    assert all(d.left_only or d.right_only for d in changed)
+    deltas = [abs(d.right_recall - d.left_recall) for d in changed]
+    assert deltas == sorted(deltas, reverse=True)
+    with pytest.raises(ValueError, match="truth must have shape"):
+        compare_indexes(left, right, source, queries, truth=truth[:, :5])

@@ -11,10 +11,13 @@ from faissight.core._faiss import import_faiss
 from faissight.core.search import GroundTruth, recall_at_k, resolve_search_params
 from faissight.core.sweep import (
     _TIMING_LOCK,
+    IntArray,
+    ProgressFn,
     QuerySet,
     benchmark_environment,
     ground_truth_ids,
     query_fingerprint,
+    summarize_recalls,
 )
 from faissight.core.types import LoadedIndex
 from faissight.core.vectors import VectorSource, validate_ids
@@ -30,6 +33,9 @@ class IndexMeasurement:
     recall: float
     latency_mean_ms: float
     latency_p95_ms: float
+    recall_ci_low: float | None = None
+    recall_ci_high: float | None = None
+    """Approximate 95% interval for the mean recall (as in sweeps)."""
 
 
 @dataclass(frozen=True)
@@ -42,6 +48,8 @@ class QueryDifference:
     left_only: list[int]
     right_only: list[int]
     overlap: int
+    query_id: int | None = None
+    """The query's own stored id for sampled queries; ``None`` for given queries."""
 
 
 @dataclass(frozen=True)
@@ -75,11 +83,15 @@ def compare_indexes(
     right_nprobe: int | None = None,
     left_ef_search: int | None = None,
     right_ef_search: int | None = None,
+    truth: IntArray | None = None,
+    progress: ProgressFn | None = None,
 ) -> ComparisonResult:
     """Evaluate compatible indexes using shared raw ground truth and paired query order.
 
     Raw vectors and ids must describe both indexes. Timing alternates which index runs
     first each repetition, uses one FAISS thread, and never mutates search parameters.
+    ``truth`` reuses already computed exact top-k ids for ``queries``; ``progress`` is
+    called between queries (a job runner can cancel there).
     """
     if not left.is_supported or not right.is_supported:
         raise ValueError("Comparison requires supported indexes.")
@@ -100,7 +112,12 @@ def compare_indexes(
     if queries.exclude_ids is not None and queries.exclude_ids.shape != (len(queries),):
         raise ValueError("Query exclusions must have one id per query.")
     faiss = import_faiss()
-    truth = ground_truth_ids(GroundTruth(source, left.metric), queries, k)
+    report = progress or (lambda frac, msg: None)
+    if truth is None:
+        report(0.0, "Computing exact ground truth")
+        truth = ground_truth_ids(GroundTruth(source, left.metric), queries, k)
+    elif truth.shape != (len(queries), k):
+        raise ValueError(f"truth must have shape ({len(queries)}, {k}), got {truth.shape}.")
     settings = [
         resolve_search_params(left, left_nprobe, left_ef_search),
         resolve_search_params(right, right_nprobe, right_ef_search),
@@ -119,6 +136,8 @@ def compare_indexes(
             rng = np.random.default_rng(seed)
             for repeat in range(repeats):
                 for j, i in enumerate(rng.permutation(n)):
+                    if j % 32 == 0:
+                        report((repeat + j / n) / repeats, f"Timing repeat {repeat + 1}/{repeats}")
                     for side in (0, 1) if repeat % 2 == 0 else (1, 0):
                         q = queries.vectors[i : i + 1]
                         start = time.perf_counter()
@@ -136,6 +155,7 @@ def compare_indexes(
         finally:
             faiss.omp_set_num_threads(previous)
     recalls = [[recall_at_k(row, truth[i]) for i, row in enumerate(rows)] for rows in results]
+    intervals = [summarize_recalls(np.asarray(r, dtype=np.float64), None)[:2] for r in recalls]
     measurements = [
         IndexMeasurement(
             li.kind.value,
@@ -144,6 +164,8 @@ def compare_indexes(
             float(np.mean(recalls[side])),
             float(latencies[side].mean()),
             float(np.percentile(latencies[side], 95)),
+            recall_ci_low=intervals[side][0],
+            recall_ci_high=intervals[side][1],
         )
         for side, li in enumerate(indexes)
     ]
@@ -158,6 +180,7 @@ def compare_indexes(
                 [x for x in a if x not in b_set],
                 [x for x in b if x not in a_set],
                 len(a_set & b_set),
+                int(queries.exclude_ids[i]) if queries.exclude_ids is not None else None,
             )
         )
     return ComparisonResult(
@@ -174,3 +197,9 @@ def compare_indexes(
         differences,
         query_seed=queries.seed,
     )
+
+
+def changed_queries(result: ComparisonResult) -> list[QueryDifference]:
+    """Queries whose neighbour sets differ, largest recall change first (then query order)."""
+    changed = [d for d in result.differences if d.left_only or d.right_only]
+    return sorted(changed, key=lambda d: (-abs(d.right_recall - d.left_recall), d.query_no))

@@ -28,7 +28,8 @@ export default defineConfig({
       command:
         `uv run --project .. python ../examples/make_synthetic.py --out ${DATA} --n 2000 --d 32 --nlist 16` +
         ` && FAISSIGHT_CACHE_DIR=${DATA}/cache uv run --project .. faissight serve ${DATA}/ivf_flat.index` +
-        ` --vectors ${DATA}/vectors.npy --meta ${DATA}/chunks.jsonl --port ${PORT} --no-browser`,
+        ` --vectors ${DATA}/vectors.npy --meta ${DATA}/chunks.jsonl --compare ${DATA}/ivf_pq.index` +
+        ` --port ${PORT} --no-browser`,
       url: `http://127.0.0.1:${PORT}/api/health`,
       reuseExistingServer: !process.env.CI,
       timeout: 120_000,

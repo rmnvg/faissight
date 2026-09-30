@@ -53,6 +53,18 @@ class SweepDefaults(BaseModel):
     """Largest accepted value (nlist for nprobe; None when unbounded)."""
 
 
+class CompareCandidateOut(BaseModel):
+    index: int
+    name: str
+    kind: str
+    ntotal: int
+    params: dict[str, Scalar]
+    search_param: Literal["nprobe", "efSearch"] | None
+    """The speed/recall knob of this index, if any."""
+    max_value: int | None
+    """Largest accepted value (nlist for nprobe; None when unbounded)."""
+
+
 class DemoLimitsOut(BaseModel):
     max_k: int
     max_ef_search: int
@@ -84,6 +96,8 @@ class InfoResponse(BaseModel):
     sweep: SweepDefaults | None
     demo_limits: DemoLimitsOut | None = None
     """Set when the server runs in read-only demo mode."""
+    compare: list[CompareCandidateOut] = []
+    """Indexes given with --compare (index 0 is the first); empty when there are none."""
     inputs: InputsOut
 
 
@@ -308,6 +322,76 @@ class SweepJobResponse(BaseModel):
     message: str
     error: str | None = None
     result: SweepResultOut | None = None
+
+
+# --- comparison --------------------------------------------------------------------------
+
+
+class CompareRequest(BaseModel):
+    candidate: int = Field(0, ge=0)
+    k: int = Field(10, ge=1, le=1000)
+    n_queries: int = Field(200, ge=1, le=10_000)
+    repeats: int = Field(3, ge=1, le=20)
+    seed: int = Field(0, ge=0, le=2**32 - 1)
+    left_nprobe: int | None = Field(None, ge=1)
+    right_nprobe: int | None = Field(None, ge=1)
+    left_ef_search: int | None = Field(None, ge=1)
+    right_ef_search: int | None = Field(None, ge=1)
+
+
+class CompareMeasurementOut(BaseModel):
+    name: str
+    kind: str
+    params: dict[str, int]
+    serialized_bytes: int
+    """Size of ``faiss.serialize_index``; not the process's resident memory."""
+    recall: float
+    recall_ci_low: float | None
+    recall_ci_high: float | None
+    latency_mean_ms: float
+    latency_p95_ms: float
+
+
+class QueryChangeOut(BaseModel):
+    query_no: int
+    id: UserId | None
+    """The query's own stored id (sampled queries); None for given queries."""
+    left_recall: float
+    right_recall: float
+    left_only: list[UserId]
+    right_only: list[UserId]
+    overlap: int
+
+
+class CompareResultOut(BaseModel):
+    metric: str
+    k: int
+    n_queries: int
+    query_origin: Literal["given", "sampled"]
+    query_sha256: str
+    query_seed: int | None
+    repeats: int
+    seed: int
+    environment: dict[str, str | int]
+    left: CompareMeasurementOut
+    right: CompareMeasurementOut
+    n_changed: int
+    """Queries whose result sets differ between the two indexes."""
+    n_improved: int
+    """Queries with higher recall on the right index."""
+    n_worsened: int
+    changes: list[QueryChangeOut]
+    """Changed queries, largest recall change first (capped)."""
+    changes_truncated: bool
+
+
+class CompareJobResponse(BaseModel):
+    job_id: str
+    status: Literal["running", "done", "failed", "cancelled"]
+    progress: float
+    message: str
+    error: str | None = None
+    result: CompareResultOut | None = None
 
 
 # --- HNSW --------------------------------------------------------------------------------

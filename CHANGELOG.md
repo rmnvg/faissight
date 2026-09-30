@@ -15,6 +15,10 @@ All notable changes to faissight are documented here. The format follows
 - Sweep cancellation in the Tuner and API, bounded background workers/queue, and bounded
   completed-job and query/ground-truth caches.
 - Release gates for tagged-commit CI and isolated installed-wheel smoke tests.
+- Compare view: `faissight serve --compare OTHER.index` (repeatable) and
+  `launch(..., compare=[...])` put other indexes over the same vectors side by side in the UI,
+  with recall intervals, mean/p95 latency, serialized size and changed neighbours per query.
+  Backed by `POST/GET/DELETE /api/compare` jobs.
 - Tuner diagnostics: 95% recall intervals, exact per-query recall distributions, the worst
   queries at each setting (linked to the Query Explorer), an optional "95% lower bound meets
   the target" rule, and the fastest measured setting reported apart from the recommendation.

@@ -759,6 +759,10 @@ def test_int64_ids_remain_exact_across_api(kind) -> None:
     else:
         members = client.get("/api/ivf/list/0").json()["members"]
         assert all(isinstance(r["id"], str) for r in members)
+    sweep = client.post("/api/sweep", json={"values": [1 if kind == "ivf" else 4], "n_queries": 20})
+    worst = _wait_sweep(client, sweep.json()["job_id"]).json()["result"]["points"][0]
+    assert all(isinstance(w["id"], str) for w in worst["worst_queries"])
+    assert all(int(w["id"]) in ids for w in worst["worst_queries"])
 
 
 def test_sweep_capacity_and_cancellation_api(synthetic) -> None:
@@ -784,3 +788,118 @@ def test_sweep_capacity_and_cancellation_api(synthetic) -> None:
     finally:
         release.set()
         assert blocker.wait(5)
+
+
+# --- comparison --------------------------------------------------------------------------
+
+
+def _wait_compare(client, job_id):
+    for _ in range(400):
+        r = client.get(f"/api/compare/{job_id}")
+        if r.status_code != 202:
+            return r
+        time.sleep(0.02)
+    raise AssertionError("comparison never finished")
+
+
+@pytest.fixture(scope="module")
+def compare_client(synthetic):
+    s = Session(
+        synthetic["ivf_flat"],
+        vectors=synthetic["vectors"],
+        compare=[synthetic["ivf_pq"], synthetic["hnsw_flat"]],
+        disk_cache=False,
+    )
+    return _client(s)
+
+
+def test_info_lists_compare_candidates(compare_client, ivf_client) -> None:
+    cands = compare_client.get("/api/info").json()["compare"]
+    assert [(c["index"], c["name"], c["kind"]) for c in cands] == [
+        (0, "ivf_pq.index", "IVF_PQ"),
+        (1, "hnsw_flat.index", "HNSW_FLAT"),
+    ]
+    assert cands[0]["search_param"] == "nprobe"
+    assert cands[0]["max_value"] == cands[0]["params"]["nlist"]
+    assert (cands[1]["search_param"], cands[1]["max_value"]) == ("efSearch", None)
+    assert ivf_client.get("/api/info").json()["compare"] == []
+
+
+def test_compare_flow(compare_client) -> None:
+    payload = {"candidate": 0, "n_queries": 30, "left_nprobe": NLIST, "right_nprobe": 1}
+    r = compare_client.post("/api/compare", json=payload)
+    assert r.status_code in (200, 202), r.text
+    body = _wait_compare(compare_client, r.json()["job_id"]).json()
+    assert body["status"] == "done", body
+    res = body["result"]
+    assert (res["left"]["name"], res["right"]["name"]) == ("ivf_flat.index", "ivf_pq.index")
+    assert res["left"]["params"] == {"nprobe": NLIST}
+    assert res["right"]["params"] == {"nprobe": 1}
+    assert res["left"]["recall"] == 1.0
+    assert res["right"]["recall"] < 1.0
+    assert res["right"]["recall_ci_low"] <= res["right"]["recall"] <= res["right"]["recall_ci_high"]
+    assert res["left"]["serialized_bytes"] > res["right"]["serialized_bytes"]
+    assert res["n_worsened"] > 0
+    assert res["n_improved"] == 0
+    assert res["n_changed"] == len(res["changes"])
+    deltas = [abs(c["right_recall"] - c["left_recall"]) for c in res["changes"]]
+    assert deltas == sorted(deltas, reverse=True)
+    first = res["changes"][0]
+    assert isinstance(first["id"], int)
+    assert first["left_only"]
+    # Same request -> same job.
+    again = compare_client.post("/api/compare", json=payload)
+    assert again.status_code == 200
+    assert again.json()["job_id"] == r.json()["job_id"]
+
+
+def test_compare_hnsw_candidate(compare_client) -> None:
+    r = compare_client.post(
+        "/api/compare", json={"candidate": 1, "n_queries": 20, "right_ef_search": 64}
+    )
+    body = _wait_compare(compare_client, r.json()["job_id"]).json()
+    assert body["result"]["right"]["params"] == {"efSearch": 64}
+
+
+@pytest.mark.parametrize(
+    ("payload", "status", "code"),
+    [
+        ({"candidate": 2}, 400, "BAD_REQUEST"),
+        ({"right_ef_search": 16}, 400, "BAD_REQUEST"),  # candidate 0 is IVF
+        ({"left_nprobe": NLIST + 1}, 400, "BAD_REQUEST"),
+        ({"k": 0}, 422, "VALIDATION_ERROR"),
+    ],
+)
+def test_compare_errors(compare_client, payload, status, code) -> None:
+    _assert_error(compare_client.post("/api/compare", json=payload), status, code)
+
+
+def test_compare_without_candidates_and_unknown_job(ivf_client) -> None:
+    body = _assert_error(ivf_client.post("/api/compare", json={}), 400, "NO_CANDIDATES")
+    assert "--compare" in body["hint"]
+    _assert_error(ivf_client.get("/api/compare/nope"), 404, "NOT_FOUND")
+    _assert_error(ivf_client.delete("/api/compare/nope"), 404, "NOT_FOUND")
+
+
+def test_compare_cancel(synthetic) -> None:
+    import threading
+
+    from faissight.core.jobs import JobRunner
+
+    session = Session(
+        synthetic["ivf_flat"], vectors=synthetic["vectors"], compare=[synthetic["ivf_pq"]]
+    )
+    session.jobs = JobRunner(max_workers=1, max_pending=2)
+    release = threading.Event()
+    blocker = session.jobs.get_or_start("blocker", lambda p: release.wait(5))
+    client = _client(session)
+    try:
+        job_id = client.post("/api/compare", json={"n_queries": 10}).json()["job_id"]
+        cancelled = client.delete(f"/api/compare/{job_id}")
+        assert cancelled.json()["status"] == "cancelled"
+    finally:
+        release.set()
+        blocker.wait(5)
+    # Starting it again reruns it.
+    rerun = client.post("/api/compare", json={"n_queries": 10}).json()
+    assert _wait_compare(client, rerun["job_id"]).json()["status"] == "done"
