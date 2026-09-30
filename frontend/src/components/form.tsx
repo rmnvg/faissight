@@ -24,11 +24,14 @@ export function NumberInput({
   onChange,
   min,
   max,
+  size = 'md',
 }: {
   value: number
   onChange: (v: number) => void
   min: number
   max: number
+  /** `sm` for dense toolbars. */
+  size?: 'sm' | 'md'
 }) {
   return (
     <input
@@ -37,7 +40,7 @@ export function NumberInput({
       min={min}
       max={max}
       onChange={(e) => onChange(Math.max(min, Math.min(max, Number(e.target.value) || min)))}
-      className="tabular rounded-lg border border-line bg-page px-3 py-2 text-sm text-ink outline-none focus:border-series-1"
+      className={`tabular rounded-lg border border-line bg-page px-3 ${size === 'sm' ? 'py-1.5' : 'py-2'} text-sm text-ink outline-none focus:border-series-1`}
     />
   )
 }
