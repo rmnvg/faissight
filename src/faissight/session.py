@@ -5,6 +5,7 @@ from __future__ import annotations
 import contextlib
 import hashlib
 import importlib.util
+import logging
 import os
 import threading
 from collections import OrderedDict
@@ -71,6 +72,7 @@ from faissight.core.vectors import (
 )
 
 T = TypeVar("T")
+log = logging.getLogger("faissight")
 ArrayInput = str | os.PathLike[str] | npt.ArrayLike
 _SWEEP_CACHE_BYTES = 64 * 1024 * 1024
 
@@ -98,7 +100,7 @@ def _load_array(value: ArrayInput, name: str, mmap: bool = False) -> np.ndarray[
     return np.asarray(value)
 
 
-def _fmt_bytes(n: int) -> str:
+def fmt_bytes(n: int) -> str:
     value = float(n)
     for unit in ("B", "KiB", "MiB", "GiB"):
         if value < 1024 or unit == "GiB":
@@ -496,7 +498,7 @@ class Session:
 
         def work(progress: Callable[[float, str], None]) -> Projection:
             cache = ProjectionCache(self.index_sha1, self._cache_root) if self._disk_cache else None
-            return compute_projection(
+            proj = compute_projection(
                 self.li,
                 self.source,
                 method=method,
@@ -506,6 +508,9 @@ class Session:
                 cache=cache,
                 progress=progress,
             )
+            if proj.cache_warning:
+                log.warning(proj.cache_warning)
+            return proj
 
         return self.jobs.get_or_start(key, work, retry=retry)
 
@@ -550,7 +555,7 @@ class Session:
         raw = self._raw
 
         def work(progress: Callable[[float, str], None]) -> pq_mod.QuantizationReport:
-            size = _fmt_bytes(self.memory_estimate().reconstruct_bytes)
+            size = fmt_bytes(self.memory_estimate().reconstruct_bytes)
             progress(0.1, f"Decoding stored vectors (about {size} in memory)")
             stored = self._once("reconstructed", lambda: reconstruct_all(self.li))
             progress(0.6, "Measuring error and distortion")

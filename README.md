@@ -116,6 +116,7 @@ faissight sweep INDEX --vectors v.npy [--param nprobe] [--target 0.95]
 faissight compare LEFT RIGHT --vectors v.npy [--queries q.npy] [--ids ids.npy]
                       [--left-nprobe 4] [--right-ef-search 64] [--json]
 faissight demo [--index ivf_pq|ivf_flat|hnsw]
+faissight cache info | clear [--older-than-days 30] [--max-mb 500]
 ```
 
 `faissight sweep` exits with code 2 when no value reaches `--target` (within the p95 budget
@@ -192,6 +193,13 @@ returns `429 JOB_CAPACITY`. The Tuner's **Cancel sweep** button (or
 checkpoint. A native FAISS call already running must finish first. Sessions retain up to
 32 completed jobs for one hour, with expired entries removed on the next access; query and
 ground-truth caches are limited to four entries and 64 MiB. An evicted sweep can be rerun.
+
+Projections are cached on disk under `~/.cache/faissight/<index sha1>/` (or
+`$FAISSIGHT_CACHE_DIR`). The cache only saves time: if it can't be written (a read-only home
+or a full disk), the projection is still shown, with a warning in the Cluster map and the
+server log. `faissight cache info` shows usage per index. `faissight cache clear` removes
+everything, or only entries unused for `--older-than-days`, or least recently used entries
+beyond `--max-mb`. It never touches the demo data. `serve --no-cache` skips the disk cache.
 
 ## How it compares
 

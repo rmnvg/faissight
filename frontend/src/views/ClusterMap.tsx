@@ -189,6 +189,11 @@ export default function ClusterMap({
           <Banner>Map shows the transformed {info.core_d}-d space the index actually searches.</Banner>
         </div>
       )}
+      {data?.points.cache_warning && (
+        <div className="border-t border-line px-6 py-2">
+          <Banner tone="warning">{data.points.cache_warning}</Banner>
+        </div>
+      )}
     </div>
   )
 }

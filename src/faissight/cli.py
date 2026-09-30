@@ -1,4 +1,4 @@
-"""Command-line interface: ``faissight serve | info | sweep``."""
+"""Command-line interface: ``faissight serve | info | sweep | compare | demo | cache``."""
 
 from __future__ import annotations
 
@@ -23,11 +23,16 @@ from faissight import __version__
 from faissight.core._faiss import FaissNotInstalledError
 from faissight.core.advice import Suggestion
 from faissight.core.loader import IndexLoadError, load_index
-from faissight.core.projection import DEFAULT_MAX_POINTS
+from faissight.core.projection import (
+    DEFAULT_MAX_POINTS,
+    cache_entries,
+    clear_cache,
+    default_cache_root,
+)
 from faissight.core.sweep import Choice, SweepResult
 from faissight.core.types import LoadedIndex
 from faissight.server.app import create_app
-from faissight.session import InputError, Session
+from faissight.session import InputError, Session, fmt_bytes
 
 app = typer.Typer(
     name="faissight",
@@ -697,3 +702,57 @@ def demo(
         compare=None,
         mmap=False,
     )
+
+
+cache_app = typer.Typer(
+    help="Show or clear the projection disk cache (~/.cache/faissight; demo data is kept).",
+    no_args_is_help=True,
+)
+app.add_typer(cache_app, name="cache")
+
+
+@cache_app.command("info")
+def cache_info() -> None:
+    """Where the projection cache is and how much each index uses."""
+    root = default_cache_root()
+    entries = cache_entries(root)
+    console.print(f"Projection cache: [bold]{escape(str(root))}[/]")
+    if not entries:
+        console.print("Empty.")
+        return
+    table = Table()
+    table.add_column("index sha1")
+    table.add_column("files", justify="right")
+    table.add_column("size", justify="right")
+    table.add_column("last used")
+    by_index: dict[str, list[float]] = {}
+    for e in entries:
+        files, size, last = by_index.get(e.index_sha1, [0, 0, 0.0])
+        by_index[e.index_sha1] = [files + 1, size + e.bytes, max(last, e.last_used)]
+    for sha1, (files, size, last) in sorted(by_index.items(), key=lambda kv: -kv[1][2]):
+        table.add_row(
+            sha1[:12],
+            str(int(files)),
+            fmt_bytes(int(size)),
+            time.strftime("%Y-%m-%d %H:%M", time.localtime(last)),
+        )
+    console.print(table)
+    n = len(entries)
+    console.print(f"Total {fmt_bytes(sum(e.bytes for e in entries))} in {n} file{'s' * (n != 1)}.")
+
+
+@cache_app.command("clear")
+def cache_clear(
+    older_than_days: Annotated[
+        float | None, typer.Option(min=0.0, help="Only remove entries unused for this many days.")
+    ] = None,
+    max_mb: Annotated[
+        float | None,
+        typer.Option(min=0.0, help="Remove least recently used entries until the rest fit."),
+    ] = None,
+) -> None:
+    """Delete cached projections (all of them, unless limited). Recomputed when needed."""
+    max_bytes = int(max_mb * 2**20) if max_mb is not None else None
+    removed = clear_cache(older_than_days=older_than_days, max_bytes=max_bytes)
+    freed = sum(e.bytes for e in removed)
+    console.print(f"Removed {len(removed)} cached projections ({fmt_bytes(freed)}).")

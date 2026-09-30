@@ -173,6 +173,8 @@ class ProjectionResponse(BaseModel):
     n_total: int
     sampled: bool
     explained_variance: list[float] | None = None
+    cache_warning: str | None = None
+    """Set when the projection couldn't be saved to the disk cache (it is still valid)."""
 
 
 class ProjectionRef(BaseModel):

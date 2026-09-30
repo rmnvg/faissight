@@ -471,3 +471,22 @@ def test_serve_demo_mode_flag(synthetic, fake_uvicorn) -> None:
     assert "Demo mode" in result.output
     (server,) = FakeServer.instances
     assert server.config.app.state.session.demo_limits is not None
+
+
+def test_cache_info_and_clear(tmp_path, monkeypatch) -> None:
+    monkeypatch.setenv("FAISSIGHT_CACHE_DIR", str(tmp_path))
+    assert "Empty." in runner.invoke(app, ["cache", "info"]).output
+    for sha, size in (("a" * 40, 3000), ("b" * 40, 5000)):
+        (tmp_path / sha).mkdir()
+        (tmp_path / sha / "proj.npz").write_bytes(b"x" * size)
+    (tmp_path / "demo-rag").mkdir()
+    info = runner.invoke(app, ["cache", "info"])
+    assert info.exit_code == 0, info.output
+    assert "aaaaaaaaaaaa" in info.output
+    assert "Total 7.8 KiB in 2 files." in info.output
+    # 0.005 MiB keeps one of the two files.
+    cleared = runner.invoke(app, ["cache", "clear", "--max-mb", "0.005"])
+    assert "Removed 1 cached projections" in cleared.output
+    cleared = runner.invoke(app, ["cache", "clear"])
+    assert "Removed 1 cached projections" in cleared.output
+    assert (tmp_path / "demo-rag").is_dir()

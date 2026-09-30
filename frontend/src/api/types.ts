@@ -120,6 +120,8 @@ export interface Projection {
   n_total: number
   sampled: boolean
   explained_variance: number[] | null
+  /** Set when the projection couldn't be saved to the disk cache (it is still valid). */
+  cache_warning?: string | null
 }
 
 export type ProjectionOrStatus = Projection | JobStatus

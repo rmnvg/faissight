@@ -1,3 +1,4 @@
+import os
 import time
 
 import faiss
@@ -399,6 +400,22 @@ def test_hnsw_trace_by_evaluation_row(synthetic) -> None:
     body = client.post("/api/trace/hnsw", json={"query": {"row": 1}, "k": 5}).json()
     assert len(body["results"]) == 5
     assert body["recall"] is not None
+
+
+@pytest.mark.skipif(os.geteuid() == 0, reason="root ignores directory permissions")
+def test_projection_survives_a_read_only_cache(synthetic, tmp_path) -> None:
+    root = tmp_path / "cache"
+    root.mkdir()
+    root.chmod(0o500)
+    try:
+        s = Session(synthetic["ivf_flat"], vectors=synthetic["vectors"], cache_root=root)
+        body = _wait_projection(_client(s)).json()
+    finally:
+        root.chmod(0o700)
+    assert body["status"] == "done"
+    assert len(body["x"]) == N
+    assert "Couldn't save to the projection cache" in body["cache_warning"]
+    assert "Permission denied" in body["cache_warning"]
 
 
 # --- sweep -------------------------------------------------------------------------------

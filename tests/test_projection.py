@@ -1,3 +1,4 @@
+import os
 import sys
 import time
 
@@ -274,3 +275,71 @@ def test_umap_projection(ivf_flat) -> None:
     placed = P.place_points(proj, ref[:5], ref)
     nearest = np.linalg.norm(proj.coords[None] - placed[:, None], axis=2).argmin(1)
     assert (nearest == np.arange(5)).mean() >= 0.8
+
+
+# --- cache write failures, usage and cleanup ------------------------------------------------
+
+
+def test_cache_write_failure_keeps_the_projection(ivf_flat, tmp_path, monkeypatch) -> None:
+    li, src, assign = ivf_flat
+    cache = P.ProjectionCache("x" * 40, root=tmp_path)
+
+    def full_disk(*a, **k):
+        raise OSError(28, "No space left on device")
+
+    monkeypatch.setattr(P.np, "savez", full_disk)
+    proj = P.compute_projection(li, src, assignments=assign, cache=cache)
+    assert proj.coords.shape == (N, 2)
+    assert "No space left on device" in proj.cache_warning
+    assert str(cache.dir) in proj.cache_warning
+    assert not list(cache.dir.glob("*"))  # the partial file is cleaned up
+    monkeypatch.undo()
+    assert P.compute_projection(li, src, assignments=assign, cache=cache).cache_warning is None
+
+
+def _entry(root, sha, name, size, mtime):
+    d = root / sha
+    d.mkdir(parents=True, exist_ok=True)
+    f = d / name
+    f.write_bytes(b"x" * size)
+    os.utime(f, (mtime, mtime))
+    return f
+
+
+def test_cache_entries_and_clear(tmp_path) -> None:
+    a, b = "a" * 40, "b" * 40
+    old = _entry(tmp_path, a, "proj-old.npz", 100, 1_000)
+    mid = _entry(tmp_path, b, "proj-mid.npz", 200, 2_000)
+    new = _entry(tmp_path, a, "proj-new.npz", 300, 3_000)
+    tmp = _entry(tmp_path, b, "abc.npz.tmp", 50, 500)
+    demo = tmp_path / "demo-rag"
+    demo.mkdir()
+    (demo / "data.npz").write_bytes(b"keep")
+    (tmp_path / "notes").mkdir()  # not a sha1 folder
+
+    entries = P.cache_entries(tmp_path)
+    assert [e.path for e in entries] == [tmp, old, mid, new]  # least recently used first
+    assert {e.index_sha1 for e in entries} == {a, b}
+
+    # Unused for 1000 s (at t=3000): the leftover temp file and the oldest entry.
+    now = 3_000 + 0.5 * 86400
+    removed = P.clear_cache(tmp_path, older_than_days=(now - 1_500) / 86400, now=now)
+    assert [e.path for e in removed] == [tmp, old]
+    # Least recently used first until 300 bytes remain.
+    removed = P.clear_cache(tmp_path, max_bytes=300)
+    assert [e.path for e in removed] == [mid]
+    assert not (tmp_path / b).exists()  # emptied folders go too
+    assert [e.path for e in P.clear_cache(tmp_path)] == [new]
+    assert not P.cache_entries(tmp_path)
+    assert (demo / "data.npz").exists()
+    assert P.cache_entries(tmp_path / "missing") == []
+
+
+def test_cache_hit_marks_the_entry_used(ivf_flat, tmp_path) -> None:
+    li, src, assign = ivf_flat
+    cache = P.ProjectionCache("c" * 40, root=tmp_path)
+    P.compute_projection(li, src, assignments=assign, cache=cache)
+    (path,) = cache.dir.glob("*.npz")
+    os.utime(path, (1_000, 1_000))
+    P.compute_projection(li, src, assignments=assign, cache=cache)
+    assert path.stat().st_mtime > 1_000

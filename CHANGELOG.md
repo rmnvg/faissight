@@ -8,6 +8,9 @@ All notable changes to faissight are documented here. The format follows
 
 ### Added
 
+- `faissight cache info` and `faissight cache clear [--older-than-days N] [--max-mb M]`
+  show and prune the projection disk cache, least recently used first (cache hits refresh
+  an entry). Demo data beside the cache is left alone.
 - p95 latency budgets: `faissight sweep --max-p95-ms`, a budget field in the Tuner and
   `max_p95_ms` on `/api/sweep/{job_id}/advice`. The recommendation must meet recall and the
   budget. When no setting does both, the result names the setting recall needs and the best
@@ -47,6 +50,9 @@ All notable changes to faissight are documented here. The format follows
 
 ### Fixed
 
+- A projection whose disk-cache write fails (read-only or full disk) is still returned,
+  with `cache_warning` in `/api/projection`, a Cluster map banner and a server log line;
+  before, the write error failed the whole projection.
 - Cancelling a sweep or comparison takes effect within one batch of 256 queries. Exact
   ground truth, warm-up and probe coverage used to run over the whole query set in one
   native call (11 s for 5,000 queries over 1M vectors) before the job could stop.
