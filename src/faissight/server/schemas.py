@@ -384,6 +384,50 @@ class SweepAdviceResponse(BaseModel):
     """Most important first; empty when nothing needs changing."""
 
 
+class BaselineRequest(BaseModel):
+    target: float = Field(0.95, ge=0.0, le=1.0)
+    confident: bool = False
+    max_p95_ms: float | None = Field(None, gt=0)
+    """The decision the current run is judged by: target recall and optional p95 budget."""
+    baseline: dict[str, Any]
+    """A run saved with ``GET /api/sweep/{job_id}/run`` or ``faissight sweep --save``."""
+    max_recall_drop: float = Field(0.01, ge=0, le=1)
+    """A setting regresses when its recall falls by more than this (absolute)."""
+    max_p95_increase: float = Field(0.2, ge=0)
+    """... or its p95 latency grows by more than this (relative, 0.2 = 20%)..."""
+    min_p95_increase_ms: float = Field(0.05, ge=0)
+    """... and by more than this many milliseconds (sub-ms timings are noisy)."""
+
+
+class PointDeltaOut(BaseModel):
+    value: int
+    baseline_recall: float
+    recall: float
+    recall_change: float
+    baseline_p95_ms: float
+    p95_ms: float
+    p95_change: float
+    recall_regressed: bool
+    latency_regressed: bool
+
+
+class BaselineResponse(BaseModel):
+    baseline_label: str | None
+    baseline_created_at: str | None
+    baseline_index: str | None
+    """File name of the baseline's index, when it had one."""
+    points: list[PointDeltaOut]
+    regressed: bool
+    recall_comparable: bool
+    latency_comparable: bool
+    notes: list[str]
+    baseline_recommended: int | None
+    recommended: int | None
+    max_recall_drop: float
+    max_p95_increase: float
+    min_p95_increase_ms: float
+
+
 # --- comparison --------------------------------------------------------------------------
 
 

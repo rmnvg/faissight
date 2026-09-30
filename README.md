@@ -113,6 +113,8 @@ faissight serve INDEX [--vectors v.npy] [--ids ids.npy] [--meta chunks.jsonl]
 faissight info INDEX                          # kind, wrappers, parameters
 faissight sweep INDEX --vectors v.npy [--param nprobe] [--target 0.95]
                       [--max-p95-ms 10] [--repeats 3] [--seed 0] [--json]
+                      [--save run.json] [--baseline earlier.json]
+faissight runs diff EARLIER.json LATER.json   # regressions between saved runs
 faissight compare LEFT RIGHT --vectors v.npy [--queries q.npy] [--ids ids.npy]
                       [--left-nprobe 4] [--right-ef-search 64] [--json]
 faissight demo [--index ivf_pq|ivf_flat|hnsw]
@@ -120,7 +122,27 @@ faissight cache info | clear [--older-than-days 30] [--max-mb 500]
 ```
 
 `faissight sweep` exits with code 2 when no value reaches `--target` (within the p95 budget
-of `--max-p95-ms`, if given), so it can guard recall and latency in CI.
+of `--max-p95-ms`, if given), and with code 3 when `--baseline` shows a regression, so it can
+guard recall and latency in CI.
+
+### Saved runs and baselines
+
+`faissight sweep --save run.json` (or **Save run** in the Tuner) keeps a sweep as JSON: the
+index's sha1 and parameters, the query set's fingerprint, the settings, the environment,
+every measurement, the recommendation for your target, and the worst queries. Compare a
+later sweep with it using `--baseline run.json`, the Tuner's **Compare with a saved run**, or
+`faissight runs diff`. A setting regresses when its recall drops by more than
+`--max-recall-drop` (0.01), or when its p95 grows by more than `--max-p95-increase` (20%)
+*and* by more than `--min-p95-increase-ms` (0.05 ms): sub-millisecond timings vary between
+runs, and the floor keeps that noise from failing CI. Recall is compared only on the same
+query set and k. Latency is compared only when both runs were measured with the same FAISS
+version and machine. Otherwise the comparison says why it doesn't judge them.
+
+```bash
+faissight sweep index.faiss --vectors v.npy --queries eval.npy --save baseline.json
+# ... rebuild or retrain the index ...
+faissight sweep new.faiss --vectors v.npy --queries eval.npy --baseline baseline.json
+```
 
 ## Reproducible tuning and index comparison
 

@@ -20,6 +20,7 @@ from rich.progress import BarColumn, Progress, SpinnerColumn, TextColumn
 from rich.table import Table
 
 from faissight import __version__
+from faissight.core import runs
 from faissight.core._faiss import FaissNotInstalledError
 from faissight.core.advice import Suggestion
 from faissight.core.loader import IndexLoadError, load_index
@@ -370,6 +371,23 @@ def sweep(
             help="Also require p95 latency (single-threaded, per query) within this budget.",
         ),
     ] = None,
+    save: Annotated[
+        Path | None, typer.Option(help="Save the run (settings, measurements, identity) here.")
+    ] = None,
+    label: Annotated[str | None, typer.Option(help="A name stored with --save.")] = None,
+    baseline: Annotated[
+        Path | None, typer.Option(help="Compare with a run saved earlier with --save.")
+    ] = None,
+    max_recall_drop: Annotated[
+        float, typer.Option(min=0.0, help="--baseline: allowed recall drop per setting.")
+    ] = 0.01,
+    max_p95_increase: Annotated[
+        float, typer.Option(min=0.0, help="--baseline: allowed p95 growth (0.2 = 20%).")
+    ] = 0.2,
+    min_p95_increase_ms: Annotated[
+        float,
+        typer.Option(min=0.0, help="Ignore p95 growth smaller than this (timing noise)."),
+    ] = 0.05,
     as_json: Annotated[bool, typer.Option("--json", help="Print JSON instead of a table.")] = False,
     mmap: Annotated[
         bool,
@@ -382,10 +400,16 @@ def sweep(
 ) -> None:
     """Measure recall@k and latency across nprobe/efSearch values.
 
-    Exits with code 2 if no value reaches --target (within --max-p95-ms, if given), so it
-    can gate CI.
+    Exits with code 2 if no value reaches --target (within --max-p95-ms, if given), and
+    otherwise 3 if --baseline shows a regression, so it can gate CI.
     """
     parsed_values = _values_option(values)
+    base_run = None
+    if baseline is not None:
+        try:
+            base_run = runs.load_run(baseline)
+        except (OSError, runs.RunFormatError) as e:
+            raise _fail(f"Can't read --baseline: {e}") from e
     if param is not None and param not in ("nprobe", "efSearch"):
         raise _fail(f"Unknown --param {param!r}.", "Use nprobe (IVF) or efSearch (HNSW).")
     try:
@@ -421,6 +445,21 @@ def sweep(
     rec = choice.point
     fastest = result.fastest(target, max_p95_ms=max_p95_ms)
     suggestions = session.sweep_advice(result, target, max_p95_ms=max_p95_ms)
+    record = session.sweep_run(result, target, max_p95_ms=max_p95_ms, label=label)
+    if save is not None:
+        runs.save_run(record, save)
+        err_console.print(f"Saved the run to {escape(str(save))}")
+    comparison = (
+        runs.compare_runs(
+            base_run,
+            record,
+            max_recall_drop=max_recall_drop,
+            max_p95_increase=max_p95_increase,
+            min_p95_increase_ms=min_p95_increase_ms,
+        )
+        if base_run is not None
+        else None
+    )
 
     if as_json:
         typer.echo(
@@ -443,6 +482,7 @@ def sweep(
                     "fastest_meeting_target": fastest.value if fastest else None,
                     "points": [asdict(p) for p in result.points],
                     "suggestions": [{**asdict(s), "kind": s.kind.value} for s in suggestions],
+                    "baseline": _comparison_json(comparison) if comparison else None,
                 },
                 indent=2,
             )
@@ -450,8 +490,67 @@ def sweep(
     else:
         _print_sweep(result, choice, target)
         _print_suggestions(suggestions)
+        if comparison is not None:
+            _print_comparison(comparison, result.param.value)
     if rec is None:
         raise typer.Exit(code=2)
+    if comparison is not None and comparison.regressed:
+        raise typer.Exit(code=3)
+
+
+def _comparison_json(cmp: runs.RunComparison) -> dict[str, object]:
+    return {
+        "regressed": cmp.regressed,
+        "recall_comparable": cmp.recall_comparable,
+        "latency_comparable": cmp.latency_comparable,
+        "notes": cmp.notes,
+        "baseline_recommended": cmp.baseline_recommended,
+        "recommended": cmp.recommended,
+        "max_recall_drop": cmp.max_recall_drop,
+        "max_p95_increase": cmp.max_p95_increase,
+        "min_p95_increase_ms": cmp.min_p95_increase_ms,
+        "points": [
+            {**asdict(d), "recall_change": d.recall_change, "p95_change": d.p95_change}
+            for d in cmp.points
+        ],
+    }
+
+
+def _print_comparison(cmp: runs.RunComparison, param: str) -> None:
+    console.print("\n[bold]Against the baseline[/]")
+    for note in cmp.notes:
+        console.print(f"[yellow]•[/] {escape(note)}")
+    if cmp.points:
+        table = Table()
+        table.add_column(param, justify="right")
+        table.add_column("recall (base → now)", justify="right")
+        table.add_column("p95 ms (base → now)", justify="right")
+        table.add_column("")
+        for d in cmp.points:
+            flags = []
+            if d.recall_regressed:
+                flags.append(f"recall {d.recall_change:+.3f}")
+            if d.latency_regressed:
+                flags.append(f"p95 {d.p95_change:+.0%}")
+            table.add_row(
+                str(d.value),
+                f"{d.baseline_recall:.3f} → {d.recall:.3f}",
+                f"{d.baseline_p95_ms:.3f} → {d.p95_ms:.3f}",
+                f"[red]regressed: {', '.join(flags)}[/]" if flags else "ok",
+            )
+        console.print(table)
+    if cmp.baseline_recommended != cmp.recommended:
+        console.print(
+            f"Recommended {param}: {cmp.baseline_recommended} before, {cmp.recommended} now."
+        )
+    if cmp.regressed:
+        console.print(
+            f"[red]Regressed[/]: recall fell by more than {cmp.max_recall_drop:g}, or p95 grew "
+            f"by more than {cmp.max_p95_increase:.0%} and {cmp.min_p95_increase_ms:g} ms, at "
+            f"{len(cmp.regressions)} setting(s)."
+        )
+    elif cmp.points:
+        console.print("[green]No regressions[/] against the baseline.")
 
 
 def _print_sweep(result: SweepResult, choice: Choice, target: float) -> None:
@@ -756,3 +855,45 @@ def cache_clear(
     removed = clear_cache(older_than_days=older_than_days, max_bytes=max_bytes)
     freed = sum(e.bytes for e in removed)
     console.print(f"Removed {len(removed)} cached projections ({fmt_bytes(freed)}).")
+
+
+runs_app = typer.Typer(
+    help="Compare saved sweep runs (faissight sweep --save).", no_args_is_help=True
+)
+app.add_typer(runs_app, name="runs")
+
+
+@runs_app.command("diff")
+def runs_diff(
+    baseline: Annotated[Path, typer.Argument(help="The earlier run.")],
+    current: Annotated[Path, typer.Argument(help="The later run.")],
+    max_recall_drop: Annotated[
+        float, typer.Option(min=0.0, help="Allowed recall drop per setting.")
+    ] = 0.01,
+    max_p95_increase: Annotated[
+        float, typer.Option(min=0.0, help="Allowed p95 growth (0.2 = 20%).")
+    ] = 0.2,
+    min_p95_increase_ms: Annotated[
+        float,
+        typer.Option(min=0.0, help="Ignore p95 growth smaller than this (timing noise)."),
+    ] = 0.05,
+    as_json: Annotated[bool, typer.Option("--json", help="Print JSON instead of a table.")] = False,
+) -> None:
+    """Compare two saved runs setting by setting; exits with code 3 on a regression."""
+    try:
+        base, cur = runs.load_run(baseline), runs.load_run(current)
+    except (OSError, runs.RunFormatError) as e:
+        raise _fail(str(e)) from e
+    cmp = runs.compare_runs(
+        base,
+        cur,
+        max_recall_drop=max_recall_drop,
+        max_p95_increase=max_p95_increase,
+        min_p95_increase_ms=min_p95_increase_ms,
+    )
+    if as_json:
+        typer.echo(json.dumps(_comparison_json(cmp), indent=2))
+    else:
+        _print_comparison(cmp, str(cur["settings"]["param"]))
+    if cmp.regressed:
+        raise typer.Exit(code=3)

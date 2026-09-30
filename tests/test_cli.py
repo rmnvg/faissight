@@ -490,3 +490,37 @@ def test_cache_info_and_clear(tmp_path, monkeypatch) -> None:
     cleared = runner.invoke(app, ["cache", "clear"])
     assert "Removed 1 cached projections" in cleared.output
     assert (tmp_path / "demo-rag").is_dir()
+
+
+def test_sweep_save_baseline_and_runs_diff(synthetic, tmp_path) -> None:
+    args = ["sweep", str(synthetic["ivf_pq"]), "--vectors", str(synthetic["vectors"])]
+    args += ["--values", "1,4", "--n-queries", "20", "--target", "0.1"]
+    base = tmp_path / "base.json"
+    saved = runner.invoke(app, [*args, "--save", str(base), "--label", "before"])
+    assert saved.exit_code == 0, saved.output
+    assert json.loads(base.read_text())["label"] == "before"
+
+    # Same run against itself: no regression.
+    same = runner.invoke(app, [*args, "--baseline", str(base), "--json"])
+    assert same.exit_code == 0, same.output
+    assert json.loads(same.stdout)["baseline"]["regressed"] is False
+
+    # A baseline with higher recall: the current run regressed.
+    better = json.loads(base.read_text())
+    for p in better["points"]:
+        p["recall"] += 0.2
+    (tmp_path / "better.json").write_text(json.dumps(better))
+    worse = runner.invoke(app, [*args, "--baseline", str(tmp_path / "better.json")])
+    assert worse.exit_code == 3
+    assert "Against the baseline" in worse.output
+    assert "Regressed" in worse.output
+
+    diff = runner.invoke(app, ["runs", "diff", str(tmp_path / "better.json"), str(base), "--json"])
+    assert diff.exit_code == 3
+    assert json.loads(diff.stdout)["regressed"] is True
+    assert runner.invoke(app, ["runs", "diff", str(base), str(base)]).exit_code == 0
+
+    (tmp_path / "bad.json").write_text("{}")
+    bad = runner.invoke(app, [*args, "--baseline", str(tmp_path / "bad.json")])
+    assert bad.exit_code == 1
+    assert "Not a faissight sweep run" in bad.output

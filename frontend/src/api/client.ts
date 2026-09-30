@@ -16,8 +16,11 @@ import type {
   ProjectionOrStatus,
   SearchRequest,
   SearchResponse,
+  BaselineComparison,
+  RunDecision,
   SweepAdvice,
   SweepJob,
+  SweepRun,
   SweepRequest,
 } from './types'
 
@@ -166,6 +169,22 @@ export const api = {
         (maxP95 !== null ? `&max_p95_ms=${maxP95}` : ''),
       signal,
     ),
+  /** A saveable record of a finished sweep, for its decision (target, budget). */
+  sweepRun: (jobId: string, d: RunDecision) =>
+    get<SweepRun>(
+      `sweep/${encodeURIComponent(jobId)}/run?target=${d.target}&confident=${d.confident}` +
+        (d.max_p95_ms !== null ? `&max_p95_ms=${d.max_p95_ms}` : ''),
+    ),
+  /** Compare a finished sweep with a saved run, setting by setting. */
+  sweepBaseline: (
+    jobId: string,
+    body: RunDecision & {
+      baseline: unknown
+      max_recall_drop: number
+      max_p95_increase: number
+      min_p95_increase_ms: number
+    },
+  ) => post<BaselineComparison>(`sweep/${encodeURIComponent(jobId)}/baseline`, body),
   /** Starts (or reuses) an index comparison; the job may still be running (HTTP 202). */
   startCompare: (req: CompareRequest) => post<CompareJob>('compare', req),
   cancelCompare: async (jobId: string) =>

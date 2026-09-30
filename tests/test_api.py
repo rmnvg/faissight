@@ -1,3 +1,4 @@
+import json
 import os
 import time
 
@@ -536,6 +537,47 @@ def test_sweep_probe_coverage_and_advice() -> None:
         422,
         "VALIDATION_ERROR",
     )
+
+
+def test_save_a_run_and_compare_with_it(ivf_client) -> None:
+    job_id = ivf_client.post("/api/sweep", json={"values": [1, 2], "n_queries": 20}).json()[
+        "job_id"
+    ]
+    _wait_sweep(ivf_client, job_id)
+    run = ivf_client.get(
+        f"/api/sweep/{job_id}/run", params={"target": 0.9, "max_p95_ms": 50, "label": "nightly"}
+    ).json()
+    assert (run["format"], run["label"]) == ("faissight.sweep-run", "nightly")
+    assert run["index"]["name"] == "ivf_flat.index"
+    assert run["decision"]["max_p95_ms"] == 50
+    assert run["queries"]["origin"] == "given"
+
+    same = ivf_client.post(
+        f"/api/sweep/{job_id}/baseline", json={"baseline": run, "target": 0.9, "max_p95_ms": 50}
+    ).json()
+    assert same["regressed"] is False
+    assert [p["value"] for p in same["points"]] == [1, 2]
+    assert same["baseline_label"] == "nightly"
+    assert same["notes"] == []
+
+    faster = json.loads(json.dumps(run))
+    for p in faster["points"]:
+        p["latency_p95_ms"] /= 10  # yesterday's run was ten times faster
+    worse = ivf_client.post(
+        f"/api/sweep/{job_id}/baseline",
+        json={"baseline": faster, "target": 0.9, "min_p95_increase_ms": 0},
+    ).json()
+    assert worse["regressed"] is True
+    assert all(p["latency_regressed"] and not p["recall_regressed"] for p in worse["points"])
+    assert worse["points"][0]["p95_change"] == pytest.approx(9.0)
+    assert any("different targets" in n for n in worse["notes"])
+
+    _assert_error(
+        ivf_client.post(f"/api/sweep/{job_id}/baseline", json={"baseline": {"format": "x"}}),
+        400,
+        "BAD_RUN",
+    )
+    _assert_error(ivf_client.get("/api/sweep/nope/run"), 404, "NOT_FOUND")
 
 
 def test_sweep_advice_hnsw(hnsw_client) -> None:

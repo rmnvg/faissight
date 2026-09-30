@@ -38,6 +38,7 @@ import {
   withinBudget,
 } from '../lib/tuner'
 import { RecallBreakdown, WorstQueries } from './TunerDiagnostics'
+import { BaselineCompare, SaveRunButton } from './TunerBaseline'
 import { NextSteps } from './TunerNextSteps'
 
 const AXIS = { fill: 'var(--muted)', fontSize: 11 }
@@ -224,6 +225,7 @@ function Results({
   const [focusValue, setFocusValue] = useState<number | null>(null)
   const pts = result.points
   const choice = choose(pts, target, confident, maxP95)
+  const decision = { target, confident, max_p95_ms: maxP95 }
   const rec = choice.point
   const quickest = fastest(pts, target, confident, maxP95)
   const fast = rec ? speedup(pts, rec) : null
@@ -577,6 +579,7 @@ function Results({
           subtitle={hasDiagnostics ? 'Click a row to see its per-query recall and worst queries' : undefined}
           actions={
             <div className="flex gap-2 print:hidden">
+              <SaveRunButton jobId={jobId} param={result.param} decision={decision} />
               <button
                 className="rounded-md border border-line px-2.5 py-1 text-xs text-ink-2 hover:text-ink"
                 onClick={() =>
@@ -683,6 +686,8 @@ function Results({
           {snippet ? <CodeBlock code={snippet} /> : <p className="text-sm text-ink-2">No value met the target. See the suggested next steps.</p>}
         </Card>
       </div>
+
+      <BaselineCompare jobId={jobId} param={result.param} decision={decision} />
     </>
   )
 }

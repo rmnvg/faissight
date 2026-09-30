@@ -19,7 +19,7 @@ import numpy.typing as npt
 
 from faissight.core import comparison as comparison_mod
 from faissight.core import hnsw as hnsw_mod
-from faissight.core import hnsw_trace, ivf
+from faissight.core import hnsw_trace, ivf, runs
 from faissight.core import pq as pq_mod
 from faissight.core.advice import Suggestion, advise
 from faissight.core.embed import (
@@ -736,6 +736,26 @@ class Session:
             max_value=max_value,
             can_compare=bool(self.candidates),
             max_p95_ms=max_p95_ms,
+        )
+
+    def sweep_run(
+        self,
+        result: SweepResult,
+        target_recall: float,
+        *,
+        confident: bool = False,
+        max_p95_ms: float | None = None,
+        label: str | None = None,
+    ) -> dict[str, Any]:
+        """A saveable record of a finished sweep of this index (see :mod:`core.runs`)."""
+        return runs.run_record(
+            result,
+            self.li,
+            self.index_sha1,
+            target_recall=target_recall,
+            confident=confident,
+            max_p95_ms=max_p95_ms,
+            label=label,
         )
 
     # --- index comparison -----------------------------------------------------------------

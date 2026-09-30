@@ -8,6 +8,12 @@ All notable changes to faissight are documented here. The format follows
 
 ### Added
 
+- Saved runs and baselines: `faissight sweep --save` and the Tuner's **Save run** keep a
+  sweep as versioned JSON (index sha1, query fingerprint, settings, environment,
+  measurements, decision, worst queries). `sweep --baseline`, **Compare with a saved run**
+  and `faissight runs diff` flag recall drops and p95 growth per setting (exit code 3 in
+  CI), and say when runs aren't comparable. API: `GET /api/sweep/{job_id}/run`,
+  `POST /api/sweep/{job_id}/baseline`; library: `core.run_record`, `compare_runs`.
 - `faissight cache info` and `faissight cache clear [--older-than-days N] [--max-mb M]`
   show and prune the projection disk cache, least recently used first (cache hits refresh
   an entry). Demo data beside the cache is left alone.

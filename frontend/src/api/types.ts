@@ -291,6 +291,46 @@ export interface SweepAdvice {
   suggestions: Suggestion[]
 }
 
+/** The Tuner decision a saved run records, or a baseline comparison is judged by. */
+export interface RunDecision {
+  target: number
+  confident: boolean
+  max_p95_ms: number | null
+}
+
+/** A saved sweep run (faissight.sweep-run); kept as opaque JSON by the UI. */
+export type SweepRun = Record<string, unknown> & { format: string; label?: string | null }
+
+export interface PointDelta {
+  value: number
+  baseline_recall: number
+  recall: number
+  recall_change: number
+  baseline_p95_ms: number
+  p95_ms: number
+  /** Relative (0.2 = 20% slower). */
+  p95_change: number
+  recall_regressed: boolean
+  latency_regressed: boolean
+}
+
+export interface BaselineComparison {
+  baseline_label: string | null
+  baseline_created_at: string | null
+  baseline_index: string | null
+  points: PointDelta[]
+  regressed: boolean
+  recall_comparable: boolean
+  latency_comparable: boolean
+  /** Why the runs may not be comparable. */
+  notes: string[]
+  baseline_recommended: number | null
+  recommended: number | null
+  max_recall_drop: number
+  max_p95_increase: number
+  min_p95_increase_ms: number
+}
+
 export interface SweepRequest {
   param?: SweepParam
   values?: number[]
