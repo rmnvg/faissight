@@ -1,4 +1,3 @@
-import { useMutation } from '@tanstack/react-query'
 import { useState } from 'react'
 import {
   Area,
@@ -17,11 +16,15 @@ import {
   ZAxis,
 } from 'recharts'
 import { api } from '../api/client'
-import { useSweep } from '../api/hooks'
-import type { Info, SweepParam, SweepPoint, SweepResult } from '../api/types'
+import { useJob } from '../api/jobs'
+import type { Info, SweepParam, SweepPoint, SweepRequest, SweepResult } from '../api/types'
 import { Field, NumberInput } from '../components/form'
-import { Banner, Card, EmptyState, Progress, Segmented, StatTile } from '../components/ui'
+import { EvaluationChecklist } from '../components/EvaluationChecklist'
+import { JobStatus } from '../components/JobStatus'
+import { Banner, Card, EmptyState, Segmented, StatTile } from '../components/ui'
 import { downloadCSV, downloadJSON } from '../lib/exportData'
+import { evaluationChecklist, halfWidth } from '../lib/evaluation'
+import { runSettingsFromParams, sweepParams, sweepValuesText } from '../lib/jobParams'
 import { navigate } from '../lib/route'
 import {
   codeSnippet,
@@ -39,22 +42,25 @@ const AXIS = { fill: 'var(--muted)', fontSize: 11 }
 
 export default function Tuner({ info, params }: { info: Info; params: URLSearchParams }) {
   const defaults = info.sweep
-  const [valuesText, setValuesText] = useState(defaults?.values.join(', ') ?? '')
-  const [k, setK] = useState(10)
-  const [nQueries, setNQueries] = useState(200)
-  const [repeats, setRepeats] = useState(3)
-  const [seed, setSeed] = useState(0)
+  // The form starts from the URL, so a shared or reloaded link can be run again as-is.
+  const [initial] = useState(() => runSettingsFromParams(params))
+  const [valuesText, setValuesText] = useState(sweepValuesText(params) ?? defaults?.values.join(', ') ?? '')
+  const [k, setK] = useState(initial.k)
+  const [nQueries, setNQueries] = useState(initial.nQueries)
+  const [repeats, setRepeats] = useState(initial.repeats)
+  const [seed, setSeed] = useState(initial.seed)
   const [target, setTarget] = useState(0.95)
   const [formError, setFormError] = useState<string | null>(null)
   const jobId = params.get('job')
 
-  const start = useMutation({
-    mutationFn: api.startSweep,
-    onSuccess: (job) => navigate('tuner', { job: job.job_id }),
+  const { job, poll, start, cancel, missing } = useJob({
+    kind: 'sweep',
+    jobId,
+    start: api.startSweep,
+    fetch: api.sweep,
+    cancel: api.cancelSweep,
+    onStarted: (j, req: SweepRequest) => navigate('tuner', sweepParams(j.job_id, req)),
   })
-  const sweep = useSweep(jobId)
-  const job = sweep.data
-  const cancel = useMutation({ mutationFn: api.cancelSweep, onSuccess: () => sweep.refetch() })
 
   if (!defaults) {
     return (
@@ -149,32 +155,31 @@ export default function Tuner({ info, params }: { info: Info; params: URLSearchP
       </Card>
 
       {!jobId && (
-        <Card>
-          <EmptyState title="Run a sweep to begin">
-            The defaults cover {defaults.values[0]}–{defaults.values[defaults.values.length - 1]}.
-            Recall is measured against exact ground truth.
-          </EmptyState>
-        </Card>
+        <>
+          <Card>
+            <EmptyState title="Run a sweep to begin">
+              The defaults cover {defaults.values[0]}–{defaults.values[defaults.values.length - 1]}.
+              Recall is measured against exact ground truth.
+            </EmptyState>
+          </Card>
+          <EvaluationChecklist items={evaluationChecklist(info)} />
+        </>
       )}
-      {job?.status === 'running' && (
-        <Card>
-          <div className="flex justify-center py-6">
-            <Progress value={job.progress} message={job.message} />
-          </div>
-        </Card>
-      )}
-      {job?.status === 'failed' && <Banner tone="error">Sweep failed: {job.error}</Banner>}
-      {job?.status === 'cancelled' && <Banner>Sweep cancelled.</Banner>}
-      {start.isError && <Banner tone="error">{start.error.message}</Banner>}
-      {cancel.isError && <Banner tone="error">{cancel.error.message}</Banner>}
-      {sweep.isError && <Banner tone="error">{sweep.error.message}</Banner>}
+      <JobStatus
+        noun="Sweep"
+        job={job}
+        missing={missing}
+        errors={[start.error, cancel.error, missing ? null : poll.error]}
+        onRunAgain={run}
+        running={start.isPending}
+      />
 
       {result && <p className="text-xs text-muted">
         {result.repeats} timing repeats · seed {result.seed} · query set {result.query_sha256.slice(0, 12)}.
         JSON exports include measurement settings and environment versions.
       </p>}
       {result && (
-        <Results result={result} target={target} setTarget={setTarget} hasRefine={info.has_refine} />
+        <Results result={result} target={target} setTarget={setTarget} info={info} />
       )}
     </div>
   )
@@ -184,13 +189,14 @@ function Results({
   result,
   target,
   setTarget,
-  hasRefine,
+  info,
 }: {
   result: SweepResult
   target: number
   setTarget: (t: number) => void
-  hasRefine: boolean
+  info: Info
 }) {
+  const hasRefine = info.has_refine
   const [confident, setConfident] = useState(false)
   const [focusValue, setFocusValue] = useState<number | null>(null)
   const pts = result.points
@@ -300,6 +306,15 @@ function Results({
           value measuring faster is usually timing noise; rerun with more timing repeats before preferring it.
         </Banner>
       )}
+
+      <EvaluationChecklist
+        items={evaluationChecklist(info, {
+          queryOrigin: result.query_origin,
+          nQueries: result.n_queries,
+          // Precision at the setting you'd pick (or the best one tried).
+          halfWidth: halfWidth((rec ?? best).recall_ci_low, (rec ?? best).recall_ci_high),
+        })}
+      />
 
       <div className="grid gap-4 lg:grid-cols-3">
         <Card

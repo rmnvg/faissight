@@ -83,18 +83,54 @@ class InputError(ValueError):
         self.hint = hint
 
 
-def _load_array(value: ArrayInput, name: str) -> np.ndarray[Any, Any]:
+def _load_array(value: ArrayInput, name: str, mmap: bool = False) -> np.ndarray[Any, Any]:
     if isinstance(value, (str, os.PathLike)):
         path = Path(value)
         if not path.is_file():
             raise InputError("FILE_NOT_FOUND", f"{name} file not found: {path}", "Check the path.")
         try:
-            return np.asarray(np.load(path, allow_pickle=False))
+            return np.asarray(np.load(path, allow_pickle=False, mmap_mode="r" if mmap else None))
         except (ValueError, OSError) as e:
             raise InputError(
                 "BAD_NPY", f"Could not read {name} from {path}: {e}", f"Save {name} with np.save."
             ) from e
     return np.asarray(value)
+
+
+def _fmt_bytes(n: int) -> str:
+    value = float(n)
+    for unit in ("B", "KiB", "MiB", "GiB"):
+        if value < 1024 or unit == "GiB":
+            return f"{value:.0f} {unit}" if unit == "B" else f"{value:.1f} {unit}"
+        value /= 1024
+    return f"{value:.1f} GiB"
+
+
+def _empty_index_error(what: str) -> InputError:
+    return InputError(
+        "EMPTY_INDEX",
+        f"The index has no vectors, so there is nothing to {what}.",
+        "Add vectors to the index (index.add) and save it again.",
+    )
+
+
+def _mapping_kept(
+    value: ArrayInput, loaded: np.ndarray[Any, Any], source: VectorSource
+) -> tuple[bool, str | None]:
+    """Whether ``--mmap`` vectors are still read from the file, and if not, why."""
+    if not isinstance(value, (str, os.PathLike)):
+        return False, "Only .npy files can be memory-mapped; in-memory arrays are used as given."
+    if np.shares_memory(source.vectors, loaded):
+        return True, None
+    if loaded.dtype != np.float32 or not loaded.flags.c_contiguous:
+        return False, (
+            f"The file holds {loaded.dtype} values, so they were converted to float32 in memory. "
+            "Save the vectors as C-ordered float32 to map them."
+        )
+    return False, (
+        "Rows were reordered by id in memory, because the ids are not sorted. "
+        "Save vectors and ids sorted by id to map them."
+    )
 
 
 class DemoLimitError(ValueError):
@@ -103,6 +139,22 @@ class DemoLimitError(ValueError):
     def __init__(self, message: str) -> None:
         super().__init__(message)
         self.hint = "This is a read-only demo with limits. Run faissight locally to lift them."
+
+
+@dataclass(frozen=True)
+class MemoryEstimate:
+    """What the vectors cost in memory, for the UI to show before heavy work starts."""
+
+    vectors_bytes: int | None
+    """Raw vectors (n x d x 4), or None without --vectors."""
+    vectors_mapped: bool
+    """True when the raw vectors are read from a memory-mapped file, not held in RAM."""
+    mmap_note: str | None
+    """Why memory mapping was asked for but not kept, if so."""
+    reconstruct_bytes: int
+    """Decoding every stored vector from the index (n x d x 4 plus int64 ids)."""
+    reconstructed: bool
+    """True once the decoded vectors are in memory."""
 
 
 @dataclass(frozen=True)
@@ -148,6 +200,7 @@ class Session:
         normalize_text: bool | None = None,
         demo_mode: bool = False,
         compare: list[Any] | None = None,
+        mmap: bool = False,
     ) -> None:
         self.li: LoadedIndex = load_index(index)
         self.jobs = JobRunner()
@@ -165,13 +218,17 @@ class Session:
         self._key_locks: dict[str, threading.RLock] = {}
 
         self._raw: VectorSource | None = None
+        self.vectors_mapped = False
+        self.mmap_note: str | None = None
         if vectors is not None:
-            x = _load_array(vectors, "vectors")
+            x = _load_array(vectors, "vectors", mmap=mmap)
             id_arr = _load_array(ids, "ids") if ids is not None else None
             try:
                 self._raw = from_arrays(self.li, x, id_arr)
             except VectorMismatchError as e:
                 raise InputError("VECTOR_MISMATCH", str(e), e.hint) from e
+            if mmap:
+                self.vectors_mapped, self.mmap_note = _mapping_kept(vectors, x, self._raw)
         elif ids is not None:
             raise InputError("IDS_WITHOUT_VECTORS", "--ids needs --vectors.", "Pass both.")
 
@@ -308,6 +365,17 @@ class Session:
         if self.assignments is not None:
             return self.assignments.ids
         return np.arange(self.li.ntotal, dtype=np.int64)
+
+    def memory_estimate(self) -> MemoryEstimate:
+        """Current and potential memory cost of the vectors (see :class:`MemoryEstimate`)."""
+        n, d = self.li.ntotal, self.li.d
+        return MemoryEstimate(
+            vectors_bytes=int(self._raw.vectors.nbytes) if self._raw is not None else None,
+            vectors_mapped=self.vectors_mapped,
+            mmap_note=self.mmap_note,
+            reconstruct_bytes=n * d * 4 + n * 8,
+            reconstructed="reconstructed" in self._lazy,
+        )
 
     def metadata_coverage(self) -> float | None:
         metadata = self.metadata
@@ -470,10 +538,13 @@ class Session:
             raise ValueError(f"Cannot analyse: {self.li.unsupported_reason}")
         if self._raw is None:
             raise pq_mod.RawVectorsRequiredError()
+        if self.li.ntotal == 0:
+            raise _empty_index_error("analyse")
         raw = self._raw
 
         def work(progress: Callable[[float, str], None]) -> pq_mod.QuantizationReport:
-            progress(0.1, "Decoding stored vectors")
+            size = _fmt_bytes(self.memory_estimate().reconstruct_bytes)
+            progress(0.1, f"Decoding stored vectors (about {size} in memory)")
             stored = self._once("reconstructed", lambda: reconstruct_all(self.li))
             progress(0.6, "Measuring error and distortion")
             return pq_mod.analyze(self.li, raw, stored, self.assignments)
@@ -510,6 +581,8 @@ class Session:
     ) -> hnsw_trace.HnswTrace:
         if not self.li.kind.is_hnsw:
             raise ValueError("HNSW traces need an HNSW index.")
+        if self.li.ntotal == 0:
+            raise _empty_index_error("trace")
         return hnsw_trace.trace_for_index(
             self.li, self.hnsw_graph, self.hnsw_vectors, vector, k, ef_search
         )
@@ -569,6 +642,8 @@ class Session:
             raise ValueError("k and n_queries must be >= 1.")
         if not 1 <= repeats <= 20 or not 0 <= seed <= 2**32 - 1:
             raise ValueError("repeats must be 1-20 and seed must be 0-4294967295.")
+        if self.li.ntotal == 0:
+            raise _empty_index_error("sweep")
         p, vals = check_values(self.li, param, values)
         if self.demo_limits is not None:
             lim = self.demo_limits
@@ -642,6 +717,8 @@ class Session:
             raise ValueError("k and n_queries must be >= 1.")
         if not 1 <= repeats <= 20 or not 0 <= seed <= 2**32 - 1:
             raise ValueError("repeats must be 1-20 and seed must be 0-4294967295.")
+        if self.li.ntotal == 0:
+            raise _empty_index_error("compare")
         right = self.candidates[candidate].li
         # Reject bad search parameters now rather than inside the background job.
         resolve_search_params(self.li, left_nprobe, left_ef_search)

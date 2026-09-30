@@ -131,6 +131,24 @@ def test_serve_with_compare(synthetic, fake_uvicorn) -> None:
     assert "Comparing with hnsw_flat.index (HNSW_FLAT)" in result.output
 
 
+def test_serve_mmap(synthetic, fake_uvicorn, tmp_path) -> None:
+    base = ["serve", str(synthetic["ivf_flat"]), "--no-browser", "--port", "8917", "--mmap"]
+    result = runner.invoke(app, [*base, "--vectors", str(synthetic["vectors"])])
+    assert result.exit_code == 0, result.output
+    assert "memory-mapped" in result.output
+    f64 = tmp_path / "f64.npy"
+    np.save(f64, np.load(synthetic["vectors"]).astype(np.float64))
+    result = runner.invoke(app, [*base, "--vectors", str(f64)])
+    assert result.exit_code == 0, result.output
+    assert "--mmap not applied" in result.output
+
+
+def test_sweep_mmap(synthetic) -> None:
+    args = ["sweep", str(synthetic["ivf_flat"]), "--vectors", str(synthetic["vectors"])]
+    result = runner.invoke(app, [*args, "--mmap", "--n-queries", "10", "--values", "1,16"])
+    assert result.exit_code == 0, result.output
+
+
 def test_serve_opens_browser_when_ready(synthetic, fake_uvicorn) -> None:
     result = runner.invoke(app, ["serve", str(synthetic["flat_l2"]), "--port", "8912"])
     assert result.exit_code == 0, result.output
@@ -323,6 +341,7 @@ def test_sweep_table(synthetic) -> None:
     assert "nprobe sweep" in result.output
     assert "Recommended nprobe=" in result.output
     assert "reconstructed" not in result.output
+    assert "held-out queries with --queries" in result.output
 
 
 def test_sweep_json(synthetic) -> None:

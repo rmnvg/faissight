@@ -80,6 +80,8 @@ def distance_distortion(
     faiss = import_faiss()
     rng = np.random.default_rng(seed)
     n = len(raw)
+    if n == 0:
+        raise ValueError("Distance distortion needs at least one stored vector.")
     q_rows = rng.choice(n, size=min(n_queries, n), replace=False)
     queries = raw.vectors[q_rows]
     flat = faiss.IndexFlat(

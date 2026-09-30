@@ -210,6 +210,10 @@ def _serve_summary(session: Session, url: str) -> None:
         console.print(f"Embedder [cyan]{session.embedder_name}[/] is loading in the background.")
     if session.demo_limits is not None:
         console.print("[yellow]Demo mode:[/] read-only limits are on (k, sweeps, efSearch, UMAP).")
+    if session.vectors_mapped:
+        console.print("Raw vectors are memory-mapped from disk (--mmap).")
+    elif session.mmap_note:
+        console.print(f"[yellow]--mmap not applied:[/] {escape(session.mmap_note)}")
     for c in session.candidates:
         console.print(
             f"Comparing with [cyan]{escape(c.name)}[/] ({c.li.kind.value}) in the Compare view."
@@ -262,6 +266,14 @@ def serve(
             help="Read-only public demo: cap k, sweeps and efSearch; UMAP only if precomputed.",
         ),
     ] = False,
+    mmap: Annotated[
+        bool,
+        typer.Option(
+            "--mmap",
+            help="Memory-map --vectors instead of loading them into RAM (needs a float32 .npy "
+            "with rows sorted by id).",
+        ),
+    ] = False,
     compare: Annotated[
         list[Path] | None,
         typer.Option(
@@ -289,6 +301,7 @@ def serve(
                 normalize_text=normalize_text,
                 demo_mode=demo_mode,
                 compare=list(compare or []),
+                mmap=mmap,
             )
     except FaissNotInstalledError as e:
         raise _fail("FAISS is not installed.", e.hint) from e
@@ -345,6 +358,14 @@ def sweep(
     ] = 0,
     target: Annotated[float, typer.Option(help="Target recall for the recommendation.")] = 0.95,
     as_json: Annotated[bool, typer.Option("--json", help="Print JSON instead of a table.")] = False,
+    mmap: Annotated[
+        bool,
+        typer.Option(
+            "--mmap",
+            help="Memory-map --vectors instead of loading them into RAM (needs a float32 .npy "
+            "with rows sorted by id).",
+        ),
+    ] = False,
 ) -> None:
     """Measure recall@k and latency across nprobe/efSearch values.
 
@@ -354,7 +375,9 @@ def sweep(
     if param is not None and param not in ("nprobe", "efSearch"):
         raise _fail(f"Unknown --param {param!r}.", "Use nprobe (IVF) or efSearch (HNSW).")
     try:
-        session = Session(index_path, vectors=vectors, ids=ids, queries=queries, disk_cache=False)
+        session = Session(
+            index_path, vectors=vectors, ids=ids, queries=queries, disk_cache=False, mmap=mmap
+        )
         _, job = session.sweep_job(param, parsed_values, k, n_queries, repeats, seed)
     except FaissNotInstalledError as e:
         raise _fail("FAISS is not installed.", e.hint) from e
@@ -421,6 +444,11 @@ def _print_sweep(result: SweepResult, rec: SweepPoint | None, target: float) -> 
         console.print(
             "[yellow]Ground truth computed on reconstructed vectors; PQ/SQ error is not "
             "measured.[/] Pass --vectors for exact ground truth."
+        )
+    if result.query_origin == "sampled":
+        console.print(
+            "Queries are stored vectors, which can behave differently from real queries. "
+            "Pass held-out queries with --queries for a production-representative result."
         )
     table = Table()
     table.add_column(result.param.value, justify="right")
@@ -503,12 +531,22 @@ def compare(
     as_json: Annotated[
         bool, typer.Option("--json", help="Include per-query neighbour changes.")
     ] = False,
+    mmap: Annotated[
+        bool,
+        typer.Option(
+            "--mmap",
+            help="Memory-map --vectors instead of loading them into RAM (needs a float32 .npy "
+            "with rows sorted by id).",
+        ),
+    ] = False,
 ) -> None:
     """Compare recall, latency and serialized size on exactly the same queries and ground truth."""
     from faissight.core.comparison import compare_indexes
 
     try:
-        session = Session(left, vectors=vectors, ids=ids, queries=queries, disk_cache=False)
+        session = Session(
+            left, vectors=vectors, ids=ids, queries=queries, disk_cache=False, mmap=mmap
+        )
         result = compare_indexes(
             session.li,
             load_index(right),
@@ -612,4 +650,5 @@ def demo(
         no_cache=False,
         demo_mode=False,
         compare=None,
+        mmap=False,
     )

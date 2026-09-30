@@ -120,3 +120,10 @@ def test_mismatched_ids(synthetic, x) -> None:
     raw = V.VectorSource(x, np.arange(N, dtype=np.int64) + 1, False)
     with pytest.raises(ValueError, match="same ids"):
         P.reconstruction_errors(raw, V.reconstruct_all(li))
+
+
+def test_distortion_on_empty_source_is_a_clear_error() -> None:
+    li = load_index(faiss.IndexFlatL2(4))
+    empty = V.from_arrays(li, np.empty((0, 4), dtype=np.float32))
+    with pytest.raises(ValueError, match="at least one"):
+        P.distance_distortion(empty, empty, Metric.L2)

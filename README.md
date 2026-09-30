@@ -109,7 +109,7 @@ ground truth is computed on reconstructed vectors, so PQ/SQ error isn't measured
 faissight serve INDEX [--vectors v.npy] [--ids ids.npy] [--meta chunks.jsonl]
                       [--embedder all-MiniLM-L6-v2] [--queries q.npy]
                       [--host 127.0.0.1] [--port 8765] [--no-browser] [--max-points 50000]
-                      [--compare other.index ...]
+                      [--compare other.index ...] [--mmap]
 faissight info INDEX                          # kind, wrappers, parameters
 faissight sweep INDEX --vectors v.npy [--param nprobe] [--target 0.95]
                       [--repeats 3] [--seed 0] [--json]
@@ -134,6 +134,12 @@ recall distribution (so "how many queries fall below the target" is known, not j
 mean) and its lowest-recall queries. The recommendation is the *smallest* value meeting the
 target; when a larger value happens to measure faster, it is reported separately as the
 fastest measured setting, since that gap is usually timing noise.
+
+Sampled stored vectors make convenient queries, but they are not your users' queries. Pass
+held-out queries with `--queries` before trusting a recommendation; the Tuner and Compare
+views show a "How far to trust this" checklist. Recall is agreement with exact search on
+the same embeddings. It is not answer quality: if the exact neighbours are poor answers, the
+embedding model or chunking is at fault, not the index.
 
 ```bash
 faissight compare exact.index compressed.index --vectors vectors.npy \

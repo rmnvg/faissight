@@ -256,3 +256,17 @@ def test_resolve_unknown_id(synthetic, data) -> None:
     li = load_index(synthetic["flat_l2"])
     with pytest.raises(S.QueryError, match="not in the index"):
         S.resolve_query(li, id=N + 5, source=V.from_arrays(li, data["x"]))
+
+
+@pytest.mark.parametrize("metric", [Metric.L2, Metric.IP])
+def test_ground_truth_on_empty_source(metric) -> None:
+    li = load_index(faiss.IndexFlatL2(4) if metric is Metric.L2 else faiss.IndexFlatIP(4))
+    source = V.from_arrays(li, np.empty((0, 4), dtype=np.float32))
+    gt = S.GroundTruth(source, metric)
+    result = gt.search(np.ones(4, dtype=np.float32), 5, exclude_id=3)
+    assert len(result.ids) == 0
+    assert len(result.distances) == 0
+    batch = gt.search_batch(np.ones((3, 4), dtype=np.float32), 5, exclude_ids=[0, 1, 2])
+    assert batch.shape == (3, 5)
+    assert (batch == -1).all()
+    assert gt.search_batch(np.empty((0, 4), dtype=np.float32), 5).shape == (0, 5)

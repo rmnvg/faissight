@@ -1,13 +1,16 @@
-import { useMutation } from '@tanstack/react-query'
 import { useState } from 'react'
 import { api } from '../api/client'
-import { useCompare } from '../api/hooks'
+import { useJob } from '../api/jobs'
 import type { CompareCandidate, CompareMeasurement, CompareRequest, CompareResult, Info, SweepParam } from '../api/types'
 import { Field, NumberInput } from '../components/form'
-import { Banner, Card, EmptyState, Progress, StatTile } from '../components/ui'
+import { EvaluationChecklist } from '../components/EvaluationChecklist'
+import { JobStatus } from '../components/JobStatus'
+import { Banner, Card, EmptyState, StatTile } from '../components/ui'
 import { fmtBytes, idList, recallIntervalsOverlap, relative, signedRecall, verdict } from '../lib/compare'
 import { downloadCSV, downloadJSON } from '../lib/exportData'
 import { fmtNum } from '../lib/format'
+import { evaluationChecklist, halfWidth } from '../lib/evaluation'
+import { compareParams, runSettingsFromParams } from '../lib/jobParams'
 import { intParam, navigate } from '../lib/route'
 
 const EF_MAX = 1 << 16
@@ -28,38 +31,31 @@ export default function Compare({ info, params }: { info: Info; params: URLSearc
   })
   const right: CompareCandidate | undefined = candidates[candidate]
   const leftParam = info.sweep?.param ?? null
-  const [leftValue, setLeftValue] = useState(() => currentValue(leftParam, info.params))
-  const [rightValues, setRightValues] = useState<Record<number, number | null>>({})
-  const rightValue = right ? (rightValues[candidate] ?? currentValue(right.search_param, right.params)) : null
-  const [k, setK] = useState(10)
-  const [nQueries, setNQueries] = useState(200)
-  const [repeats, setRepeats] = useState(3)
-  const [seed, setSeed] = useState(0)
-
-  const start = useMutation({
-    mutationFn: api.startCompare,
-    onSuccess: (job, req) => navigate('compare', { job: job.job_id, candidate: req.candidate }),
-  })
-  const compare = useCompare(jobId)
-  const job = compare.data
-  const cancel = useMutation({ mutationFn: api.cancelCompare, onSuccess: () => compare.refetch() })
-
-  // A comparison opened from a link: show the settings it was run with in the form.
-  const loaded = job?.status === 'done' ? job.result : null
-  const [syncedJob, setSyncedJob] = useState<string | null>(null)
-  if (loaded && jobId && syncedJob !== jobId) {
-    // Adjusting state while rendering (not in an effect) avoids a second pass with stale inputs.
-    setSyncedJob(jobId)
-    const knob = (p: Record<string, number>) => p.nprobe ?? p.efSearch ?? null
-    const l = knob(loaded.left.params)
-    const r = knob(loaded.right.params)
-    if (l !== null) setLeftValue(l)
-    if (r !== null) setRightValues((v) => ({ ...v, [candidate]: r }))
-    setK(loaded.k)
-    setNQueries(loaded.n_queries)
-    setRepeats(loaded.repeats)
-    setSeed(loaded.seed)
+  // The form starts from the URL, so a shared or reloaded link can be run again as-is.
+  const [initial] = useState(() => runSettingsFromParams(params))
+  const urlKnob = (key: string) => {
+    const v = intParam(params, key)
+    return v !== null && v >= 1 ? v : null
   }
+  const [leftValue, setLeftValue] = useState(() => urlKnob('left') ?? currentValue(leftParam, info.params))
+  const [rightValues, setRightValues] = useState<Record<number, number | null>>(() => {
+    const r = urlKnob('right')
+    return r !== null ? { [candidate]: r } : {}
+  })
+  const rightValue = right ? (rightValues[candidate] ?? currentValue(right.search_param, right.params)) : null
+  const [k, setK] = useState(initial.k)
+  const [nQueries, setNQueries] = useState(initial.nQueries)
+  const [repeats, setRepeats] = useState(initial.repeats)
+  const [seed, setSeed] = useState(initial.seed)
+
+  const { job, poll, start, cancel, missing } = useJob({
+    kind: 'compare',
+    jobId,
+    start: api.startCompare,
+    fetch: api.compare,
+    cancel: api.cancelCompare,
+    onStarted: (j, req: CompareRequest) => navigate('compare', compareParams(j.job_id, req)),
+  })
 
   if (candidates.length === 0) {
     return (
@@ -189,20 +185,29 @@ export default function Compare({ info, params }: { info: Info; params: URLSearc
           </EmptyState>
         </Card>
       )}
-      {job?.status === 'running' && (
-        <Card>
-          <div className="flex justify-center py-6">
-            <Progress value={job.progress} message={job.message} />
-          </div>
-        </Card>
-      )}
-      {job?.status === 'failed' && <Banner tone="error">Comparison failed: {job.error}</Banner>}
-      {job?.status === 'cancelled' && <Banner>Comparison cancelled.</Banner>}
-      {start.isError && <Banner tone="error">{start.error.message}</Banner>}
-      {cancel.isError && <Banner tone="error">{cancel.error.message}</Banner>}
-      {compare.isError && <Banner tone="error">{compare.error.message}</Banner>}
+      <JobStatus
+        noun="Comparison"
+        job={job}
+        missing={missing}
+        errors={[start.error, cancel.error, missing ? null : poll.error]}
+        onRunAgain={run}
+        running={start.isPending}
+      />
 
+      {!jobId && <EvaluationChecklist items={evaluationChecklist(info)} />}
       {result && <Results result={result} leftParam={leftParam} />}
+      {result && (
+        <EvaluationChecklist
+          items={evaluationChecklist(info, {
+            queryOrigin: result.query_origin,
+            nQueries: result.n_queries,
+            halfWidth: Math.max(
+              halfWidth(result.left.recall_ci_low, result.left.recall_ci_high) ?? 0,
+              halfWidth(result.right.recall_ci_low, result.right.recall_ci_high) ?? 0,
+            ),
+          })}
+        />
+      )}
     </div>
   )
 }

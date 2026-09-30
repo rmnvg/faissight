@@ -372,3 +372,43 @@ def test_compare_job_reuses_sweep_ground_truth(synthetic, monkeypatch) -> None:
         s.compare_job(candidate=1)
     with pytest.raises(ValueError, match="--compare"):
         Session(synthetic["ivf_flat"], vectors=synthetic["vectors"]).compare_job()
+
+
+def test_mmap_vectors_are_used_in_place(synthetic) -> None:
+    s = Session(synthetic["ivf_pq"], vectors=synthetic["vectors"], mmap=True, disk_cache=False)
+    assert s.vectors_mapped
+    assert s.mmap_note is None
+    assert not s.source.vectors.flags.writeable  # still the read-only mapping
+    # Exact search, sweeps and quantization analysis all work over the mapped array.
+    assert s.query(id=3, k=5).recall is not None
+    _, job = s.sweep_job(values=[1, 4], n_queries=10)
+    job.wait(30)
+    assert job.error is None
+    pq = s.pq_job()
+    pq.wait(30)
+    assert pq.error is None
+    mem = s.memory_estimate()
+    assert mem.vectors_bytes == SMALL["n"] * SMALL["d"] * 4
+    assert mem.reconstruct_bytes == SMALL["n"] * (SMALL["d"] * 4 + 8)
+    assert mem.reconstructed  # the PQ analysis decoded the stored vectors
+
+
+def test_mmap_explains_when_it_cannot_be_kept(synthetic, tmp_path) -> None:
+    x = np.load(synthetic["vectors"])
+    as_f64 = tmp_path / "f64.npy"
+    np.save(as_f64, x.astype(np.float64))
+    s = Session(synthetic["ivf_flat"], vectors=as_f64, mmap=True, disk_cache=False)
+    assert not s.vectors_mapped
+    assert "float64" in s.mmap_note
+    # Unsorted ids: rows are reordered by id in memory.
+    ids = np.random.default_rng(0).permutation(len(x)).astype(np.int64)
+    index = faiss.IndexIDMap(faiss.IndexFlatL2(x.shape[1]))
+    index.add_with_ids(x, ids)
+    s = Session(index, vectors=synthetic["vectors"], ids=ids, mmap=True, disk_cache=False)
+    assert not s.vectors_mapped
+    assert "reordered" in s.mmap_note
+    s = Session(synthetic["ivf_flat"], vectors=x, mmap=True, disk_cache=False)
+    assert "in-memory arrays" in s.mmap_note
+    plain = Session(synthetic["ivf_flat"], vectors=synthetic["vectors"], disk_cache=False)
+    assert (plain.vectors_mapped, plain.mmap_note) == (False, None)
+    assert Session(synthetic["ivf_flat"], disk_cache=False).memory_estimate().vectors_bytes is None

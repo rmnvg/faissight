@@ -8,6 +8,13 @@ All notable changes to faissight are documented here. The format follows
 
 ### Added
 
+- "How far to trust this" checklist in the Tuner and Compare views: whether queries are
+  held-out or sampled stored vectors, whether ground truth is exact, how precisely recall is
+  measured (and how many queries would tighten it), and that ANN recall is not relevance.
+  `faissight sweep` says when its queries are sampled stored vectors.
+- `--mmap` for `serve`, `sweep` and `compare` (and `launch(..., mmap=True)`) memory-maps the
+  raw vectors file. `/api/info.memory` and the Overview report the vectors' size, whether
+  they are mapped (and why not, if not), and what decoding the index would cost.
 - `faissight compare` and `core.compare_indexes`: paired recall/latency/size comparison
   with shared raw ground truth and per-query neighbour changes.
 - Configurable sweep timing repeats and seeds, plus query fingerprints and environment
@@ -26,6 +33,14 @@ All notable changes to faissight are documented here. The format follows
 
 ### Fixed
 
+- Restarting a cancelled or failed sweep or comparison with the same settings now shows the
+  new run; before, the reused job id kept the old status on screen and polling never resumed.
+- Sweep and comparison links carry their settings, and a job the server no longer has (expired
+  or server restarted) says so and offers "Run again" with those settings.
+- A server restart during a running sweep or comparison no longer leaves a stale progress bar
+  beside the "no longer on the server" notice.
+- Empty indexes no longer crash exact search, IVF traces, HNSW traces or quantization
+  analysis: searches return no results and analyses answer `400 EMPTY_INDEX` with a hint.
 - Reject raw-vector ID sets that disagree with the index instead of reporting false recall.
 - Preserve large int64 IDs across API responses, searches, maps, HNSW traces, links and exports.
 - Reject non-finite vectors/queries and fractional raw-vector IDs at ingestion.

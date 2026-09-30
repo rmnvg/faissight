@@ -45,4 +45,34 @@ Rough guide:
 
 (Flat/IVFFlat index + vectors; a PQ index is much smaller, so roughly halve these.)
 
+### Memory-mapped vectors (`--mmap`)
+
+`--mmap` (or `launch(..., mmap=True)`) maps the `--vectors` file instead of reading it into
+RAM. Exact search, sweeps, comparisons and quantization analysis read the mapped file
+directly. The pages still show up in RSS, but they are file-backed and clean, so the OS can
+drop them under memory pressure instead of swapping. faissight keeps the mapping only if the
+file holds C-ordered float32 rows sorted by id. Otherwise it copies the vectors into memory
+and says why, both at startup and in the Overview.
+
+Measured on an M-series Mac with 1M × 64 vectors (256 MB) and an IVF1024,PQ16 index
+(24 MB): load, one exact search, then a 200-query sweep over two nprobe values.
+"Footprint" is macOS's physical footprint, which excludes clean file-backed pages.
+
+| Vectors | Mode | Mapped | Peak RSS | Footprint after | Peak footprint |
+|---|---|---|---|---|---|
+| ids 0..n-1 | in RAM | – | 401 MB | 338 MB | 362 MB |
+| ids 0..n-1 | `--mmap` | yes | 402 MB | 94 MB | 118 MB |
+| custom ids, unsorted rows | in RAM | – | 627 MB | 338 MB | 588 MB |
+| custom ids, unsorted rows | `--mmap` | no (reordered) | 627 MB | 338 MB | 361 MB |
+
+Custom ids in arbitrary row order cost a second copy while the rows are sorted by id: the
+peak is loaded array + sorted copy. `--mmap` removes the first of those, cutting the peak
+by about the size of the vectors, but the sorted copy stays in RAM. Save vectors and ids
+sorted by id to map them fully.
+
+Decoding the index (every vector as float32, plus int64 ids) is the other large cost. It is
+needed for quantization analysis, and for ground truth and maps when `--vectors` is not
+given. The Overview's Inputs card shows the estimate before anything is decoded, and the
+Quantization view's progress message repeats it.
+
 For very large indexes, lower `--max-points` to keep the browser light. Projections are cached on disk under `~/.cache/faissight/`, so restarts are fast.

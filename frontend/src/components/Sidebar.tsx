@@ -2,6 +2,7 @@ import type { Info } from '../api/types'
 import type { View } from '../lib/route'
 import type { ThemePref } from '../lib/theme'
 import { Segmented } from './ui'
+import { hasQuantization } from '../lib/capabilities'
 import { fmtNum } from '../lib/format'
 
 const PARAM_LABELS: Record<string, string> = {
@@ -48,10 +49,7 @@ export function Sidebar({
       view: 'quantization',
       label: 'Quantization',
       hint: 'Compression error',
-      enabled:
-        supported &&
-        (['IVF_PQ', 'IVF_SQ', 'HNSW_OTHER'].includes(info?.kind ?? '') ||
-          (info?.transforms.some((t) => t.d_out < t.d_in) ?? false)),
+      enabled: supported && info !== undefined && hasQuantization(info),
     },
     {
       view: 'tuner',

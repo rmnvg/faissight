@@ -46,6 +46,20 @@ class InputsOut(BaseModel):
     queries: int | None
 
 
+class MemoryOut(BaseModel):
+    vectors_bytes: int | None
+    """Raw vectors (n x d x 4); None without --vectors."""
+    vectors_mapped: bool
+    """Raw vectors are read from a memory-mapped file (--mmap), not held in RAM."""
+    mmap_note: str | None
+    """Why --mmap could not keep the vectors mapped, if so."""
+    reconstruct_bytes: int
+    """Memory needed to decode every stored vector (quantization analysis; ground truth and
+    maps without --vectors)."""
+    reconstructed: bool
+    """The decoded vectors are already in memory."""
+
+
 class SweepDefaults(BaseModel):
     param: Literal["nprobe", "efSearch"]
     values: list[int]
@@ -99,6 +113,7 @@ class InfoResponse(BaseModel):
     compare: list[CompareCandidateOut] = []
     """Indexes given with --compare (index 0 is the first); empty when there are none."""
     inputs: InputsOut
+    memory: MemoryOut
 
 
 # --- IVF ---------------------------------------------------------------------------------
