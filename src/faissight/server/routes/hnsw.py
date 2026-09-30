@@ -103,6 +103,7 @@ def trace_hnsw(req: S.SearchRequest, session: HnswDep) -> S.HnswTraceResponse:
         id=req.query.id,
         vector=req.query.vector,
         text=req.query.text,
+        row=req.query.row,
         k=req.k,
         ef_search=req.ef_search,
         compare=req.compare,

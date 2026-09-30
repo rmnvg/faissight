@@ -369,6 +369,38 @@ def test_openapi_docs(ivf_client) -> None:
     assert ivf_client.get("/api/openapi.json").json()["info"]["title"] == "faissight"
 
 
+def test_search_by_evaluation_row(ivf_client, hnsw_client, synthetic) -> None:
+    queries = np.load(synthetic["queries"])
+    body = ivf_client.post("/api/search", json={"query": {"row": 3}, "k": 5}).json()
+    assert body["query_kind"] == "row"
+    by_vector = ivf_client.post(
+        "/api/search", json={"query": {"vector": queries[3].tolist()}, "k": 5}
+    ).json()
+    assert [r["id"] for r in body["results"]] == [r["id"] for r in by_vector["results"]]
+    assert body["recall"] == by_vector["recall"]
+
+    _assert_error(
+        ivf_client.post("/api/search", json={"query": {"row": len(queries)}}), 400, "QUERY_ERROR"
+    )
+    _assert_error(
+        ivf_client.post("/api/search", json={"query": {"row": -1}}), 422, "VALIDATION_ERROR"
+    )
+    # No --queries on this session: rows can't be resolved.
+    body = _assert_error(
+        hnsw_client.post("/api/trace/hnsw", json={"query": {"row": 0}}), 400, "QUERY_ERROR"
+    )
+    assert "--queries" in body["message"]
+
+
+def test_hnsw_trace_by_evaluation_row(synthetic) -> None:
+    client = _client(
+        Session(synthetic["hnsw_flat"], vectors=synthetic["vectors"], queries=synthetic["queries"])
+    )
+    body = client.post("/api/trace/hnsw", json={"query": {"row": 1}, "k": 5}).json()
+    assert len(body["results"]) == 5
+    assert body["recall"] is not None
+
+
 # --- sweep -------------------------------------------------------------------------------
 
 

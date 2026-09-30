@@ -11,6 +11,7 @@ import { downloadCSV, downloadJSON } from '../lib/exportData'
 import { fmtNum } from '../lib/format'
 import { evaluationChecklist, halfWidth } from '../lib/evaluation'
 import { compareParams, runSettingsFromParams } from '../lib/jobParams'
+import { queryRefParams } from '../lib/ids'
 import { intParam, navigate } from '../lib/route'
 
 const EF_MAX = 1 << 16
@@ -393,23 +394,21 @@ function Results({ result, leftParam }: { result: CompareResult; leftParam: Swee
                       <td className="tabular py-1.5 pr-3 text-xs text-ink-2">{idList(c.left_only)}</td>
                       <td className="tabular py-1.5 pr-3 text-xs text-ink-2">{idList(c.right_only)}</td>
                       <td className="py-1.5 text-right">
-                        {c.id !== null && (
-                          <button
-                            title="Open this query on the main index in the Query Explorer"
-                            className="rounded-md border border-line px-2 py-0.5 text-xs whitespace-nowrap text-ink-2 hover:text-ink"
-                            onClick={() =>
-                              navigate('query', {
-                                id: String(c.id),
-                                k,
-                                ...(leftValue !== null && leftValue !== undefined
-                                  ? { [leftParam === 'nprobe' ? 'nprobe' : 'ef']: leftValue }
-                                  : {}),
-                              })
-                            }
-                          >
-                            Explain
-                          </button>
-                        )}
+                        <button
+                          title="Open this query on the main index in the Query Explorer"
+                          className="rounded-md border border-line px-2 py-0.5 text-xs whitespace-nowrap text-ink-2 hover:text-ink"
+                          onClick={() =>
+                            navigate('query', {
+                              ...queryRefParams(c),
+                              k,
+                              ...(leftValue !== null && leftValue !== undefined
+                                ? { [leftParam === 'nprobe' ? 'nprobe' : 'ef']: leftValue }
+                                : {}),
+                            })
+                          }
+                        >
+                          Explain
+                        </button>
                       </td>
                     </tr>
                   ))}

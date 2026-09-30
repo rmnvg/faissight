@@ -167,6 +167,21 @@ test('tuner: suggested next steps explain a miss and run the follow-up sweep', a
   })
 })
 
+test('tuner: a held-out evaluation query opens in the explorer by its row', async ({ page }) => {
+  // The HNSW server has --queries: worst queries have no stored id, only a row.
+  await page.goto('http://127.0.0.1:8798/#/tuner')
+  await page.getByRole('textbox').first().fill('4, 16')
+  await page.getByRole('button', { name: 'Run sweep' }).click()
+  const worst = page.locator('section', { hasText: /Worst queries at efSearch/ })
+  await expect(worst.getByText(/^query #\d+$/).first()).toBeVisible({ timeout: 20_000 })
+  await worst.getByRole('button', { name: 'Explain' }).first().click()
+  await expect(page).toHaveURL(/#\/query\?row=\d+&k=10&ef=\d+/)
+  await expect(page.getByRole('radio', { name: 'Evaluation query' })).toBeChecked()
+  await expect(page.getByText('Recall@10', { exact: true })).toBeVisible()
+  const truth = page.locator('section', { hasText: 'Exact nearest neighbours' }).locator('tbody tr')
+  await expect(truth).toHaveCount(10)
+})
+
 test('compare: side-by-side recall, latency, size and changed neighbours', async ({ page }) => {
   await page.goto('/')
   await page.getByRole('button', { name: /Compare/ }).click()

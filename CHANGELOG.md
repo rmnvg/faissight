@@ -8,6 +8,10 @@ All notable changes to faissight are documented here. The format follows
 
 ### Added
 
+- Held-out evaluation queries (`--queries`) can be explained like stored ones: "Explain" in
+  the Tuner's worst queries and Compare's changed queries opens the Query Explorer by the
+  query's row (`#/query?row=N`), and the explorer has an "Evaluation query" mode. The API
+  accepts `{"query": {"row": N}}` in `/api/search` and `/api/trace/hnsw`.
 - Suggested next steps in the Tuner, `faissight sweep` and `GET /api/sweep/{job_id}/advice`:
   probe more lists, compression/PCA/ranking limits, larger or no more efSearch, failing
   queries behind a good mean, and uneven IVF lists, each with the measurements behind it

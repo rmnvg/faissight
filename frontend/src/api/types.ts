@@ -128,6 +128,8 @@ export interface QueryIn {
   id?: UserId
   vector?: number[]
   text?: string
+  /** Row of the evaluation query set given with --queries (as sweeps number them). */
+  row?: number
 }
 
 export interface SearchRequest {
@@ -162,7 +164,7 @@ export interface TruthRow {
 }
 
 export interface SearchResponse {
-  query_kind: 'id' | 'vector' | 'text'
+  query_kind: 'id' | 'vector' | 'text' | 'row'
   metric: Metric
   higher_is_closer: boolean
   k: number

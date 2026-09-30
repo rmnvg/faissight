@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { parseId } from './ids'
+import { parseId, queryRefParams } from './ids'
 import { toQueryString } from './route'
 import { toCSV } from './exportData'
 
@@ -20,5 +20,13 @@ describe('lossless ids', () => {
     for (const text of ['', ' ', '-1', '1.5', '1e3', '0xff', '9223372036854775808', null]) {
       expect(parseId(text)).toBeNull()
     }
+  })
+})
+
+describe('queryRefParams', () => {
+  it('opens sampled queries by stored id and held-out queries by row', () => {
+    expect(queryRefParams({ id: '9007199254740993', query_no: 4 })).toEqual({ id: '9007199254740993' })
+    expect(queryRefParams({ id: 0, query_no: 4 })).toEqual({ id: '0' })
+    expect(queryRefParams({ id: null, query_no: 4 })).toEqual({ row: 4 })
   })
 })

@@ -35,11 +35,13 @@ export default defineConfig({
       timeout: 120_000,
     },
     {
-      // Second server for the HNSW view; waits for the first to have written the data.
+      // Second server for the HNSW view, with held-out --queries; waits for the first to
+      // have written the data.
       command:
-        `until [ -f ${DATA}/hnsw_flat.index ] && [ -f ${DATA}/chunks.jsonl ]; do sleep 0.2; done` +
+        `until [ -f ${DATA}/hnsw_flat.index ] && [ -f ${DATA}/chunks.jsonl ] && [ -f ${DATA}/queries.npy ]; do sleep 0.2; done` +
         ` && FAISSIGHT_CACHE_DIR=${DATA}/cache uv run --project .. faissight serve ${DATA}/hnsw_flat.index` +
-        ` --vectors ${DATA}/vectors.npy --meta ${DATA}/chunks.jsonl --port ${HNSW_PORT} --no-browser`,
+        ` --vectors ${DATA}/vectors.npy --meta ${DATA}/chunks.jsonl --queries ${DATA}/queries.npy` +
+        ` --port ${HNSW_PORT} --no-browser`,
       url: `http://127.0.0.1:${HNSW_PORT}/api/health`,
       reuseExistingServer: !process.env.CI,
       timeout: 120_000,

@@ -187,12 +187,16 @@ class QueryIn(BaseModel):
     id: UserId | None = None
     vector: list[float] | None = None
     text: str | None = None
+    row: int | None = Field(None, ge=0)
+    """Row of the evaluation query set given with ``--queries`` (as sweeps number them)."""
 
     @model_validator(mode="after")
     def _exactly_one(self) -> QueryIn:
-        given = [k for k in ("id", "vector", "text") if getattr(self, k) is not None]
+        given = [k for k in ("id", "vector", "text", "row") if getattr(self, k) is not None]
         if len(given) != 1:
-            raise ValueError(f"Give exactly one of id, vector or text (got {given or 'none'}).")
+            raise ValueError(
+                f"Give exactly one of id, vector, text or row (got {given or 'none'})."
+            )
         return self
 
 
@@ -237,7 +241,7 @@ class TruthRow(BaseModel):
 
 
 class SearchResponse(BaseModel):
-    query_kind: Literal["id", "vector", "text"]
+    query_kind: Literal["id", "vector", "text", "row"]
     metric: str
     higher_is_closer: bool
     k: int

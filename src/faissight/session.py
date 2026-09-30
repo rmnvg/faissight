@@ -429,12 +429,16 @@ class Session:
         id: int | None = None,
         vector: npt.ArrayLike | None = None,
         text: str | None = None,
+        row: int | None = None,
         k: int = 10,
         nprobe: int | None = None,
         ef_search: int | None = None,
         compare: bool = True,
     ) -> QueryReport:
-        """Resolve, search, and (with ``compare``) explain against exact ground truth."""
+        """Resolve, search, and (with ``compare``) explain against exact ground truth.
+
+        ``row`` is a row of the ``--queries`` set, as numbered by sweeps and comparisons.
+        """
         if self.demo_limits is not None:
             lim = self.demo_limits
             if k > lim.max_k:
@@ -448,6 +452,8 @@ class Session:
             text=text,
             source=self.source if id is not None else None,
             embedder=self.get_embedder() if text is not None else None,
+            row=row,
+            queries=self.queries,
         )
         return explain_query(
             self.li,

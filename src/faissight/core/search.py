@@ -209,6 +209,8 @@ class QueryKind(str, Enum):
     ID = "id"
     VECTOR = "vector"
     TEXT = "text"
+    ROW = "row"
+    """A row of the evaluation query set (e.g. ``--queries``)."""
 
 
 @dataclass(frozen=True)
@@ -222,6 +224,8 @@ class ResolvedQuery:
     kind: QueryKind
     exclude_id: int | None = None
     text: str | None = None
+    row: int | None = None
+    """Row in the evaluation query set, for ``QueryKind.ROW``."""
 
 
 def resolve_query(
@@ -232,12 +236,31 @@ def resolve_query(
     text: str | None = None,
     source: VectorSource | None = None,
     embedder: Embedder | None = None,
+    row: int | None = None,
+    queries: npt.ArrayLike | None = None,
 ) -> ResolvedQuery:
-    """Resolve exactly one of ``id`` (needs ``source``), ``vector`` or ``text`` (needs
-    ``embedder``) to a query vector of dimension ``li.d``."""
-    given = [name for name, v in (("id", id), ("vector", vector), ("text", text)) if v is not None]
+    """Resolve exactly one of ``id`` (needs ``source``), ``vector``, ``text`` (needs
+    ``embedder``) or ``row`` of ``queries`` (an evaluation set, such as held-out queries)
+    to a query vector of dimension ``li.d``.
+
+    Rows are the numbering sweeps and comparisons report for given queries, so a failing
+    evaluation query can be explained without a stored id.
+    """
+    named = (("id", id), ("vector", vector), ("text", text), ("row", row))
+    given = [name for name, v in named if v is not None]
     if len(given) != 1:
-        raise QueryError(f"Give exactly one of id, vector or text (got {given or 'none'}).")
+        raise QueryError(f"Give exactly one of id, vector, text or row (got {given or 'none'}).")
+
+    if row is not None:
+        if queries is None:
+            raise QueryError(
+                "Querying by row needs an evaluation query set (start with --queries)."
+            )
+        q = np.asarray(queries)
+        if not 0 <= row < len(q):
+            raise QueryError(f"Row {row} is outside the {len(q)} evaluation queries.")
+        vec = _check_dim(q[row], li.d, f"Evaluation query {row}")
+        return ResolvedQuery(vec, QueryKind.ROW, row=int(row))
 
     if id is not None:
         if source is None:

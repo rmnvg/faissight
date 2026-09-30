@@ -10,6 +10,7 @@ export function QueryForm({ info, runner }: { info: Info; runner: QueryRunner })
   const nlist = Number(info.params.nlist ?? 1)
   const hasEmbedder = info.inputs.embedder !== null
   const embedderReady = info.inputs.embedder_status === 'ready'
+  const nEval = info.inputs.queries ?? 0
   const inputRef = useRef<HTMLInputElement & HTMLTextAreaElement>(null)
 
   // "/" focuses the query box.
@@ -41,6 +42,15 @@ export function QueryForm({ info, runner }: { info: Info; runner: QueryRunner })
                 title: hasEmbedder ? undefined : 'Start faissight with --embedder to query by text',
               },
               { value: 'id', label: 'Stored id' },
+              {
+                value: 'row',
+                label: 'Evaluation query',
+                disabled: nEval === 0,
+                title:
+                  nEval > 0
+                    ? `A row of the ${nEval} queries given with --queries, as sweeps number them`
+                    : 'Start faissight with --queries to explain held-out queries',
+              },
               { value: 'vector', label: 'Vector' },
             ]}
           />
@@ -58,7 +68,13 @@ export function QueryForm({ info, runner }: { info: Info; runner: QueryRunner })
 
         <div className="flex flex-wrap items-end gap-3">
           <label className="flex min-w-64 flex-1 flex-col gap-1 text-xs text-ink-2">
-            {f.queryMode === 'text' ? 'Query text' : f.queryMode === 'id' ? 'Stored vector id' : `Vector (${info.d} numbers)`}
+            {f.queryMode === 'text'
+              ? 'Query text'
+              : f.queryMode === 'id'
+                ? 'Stored vector id'
+                : f.queryMode === 'row'
+                  ? `Evaluation query row (0–${nEval - 1})`
+                  : `Vector (${info.d} numbers)`}
             {f.queryMode === 'vector' ? (
               <textarea
                 ref={inputRef}
@@ -71,10 +87,16 @@ export function QueryForm({ info, runner }: { info: Info; runner: QueryRunner })
             ) : (
               <input
                 ref={inputRef}
-                value={f.queryMode === 'text' ? f.text : f.idInput}
-                onChange={(e) => (f.queryMode === 'text' ? f.setText(e.target.value) : f.setIdInput(e.target.value))}
-                inputMode={f.queryMode === 'id' ? 'numeric' : undefined}
-                placeholder={f.queryMode === 'text' ? 'what is inverted file indexing?' : 'e.g. 42'}
+                value={f.queryMode === 'text' ? f.text : f.queryMode === 'row' ? f.rowInput : f.idInput}
+                onChange={(e) =>
+                  f.queryMode === 'text'
+                    ? f.setText(e.target.value)
+                    : f.queryMode === 'row'
+                      ? f.setRowInput(e.target.value)
+                      : f.setIdInput(e.target.value)
+                }
+                inputMode={f.queryMode === 'id' || f.queryMode === 'row' ? 'numeric' : undefined}
+                placeholder={f.queryMode === 'text' ? 'what is inverted file indexing?' : f.queryMode === 'row' ? 'e.g. 0' : 'e.g. 42'}
                 className="rounded-lg border border-line bg-page px-3 py-2 text-sm text-ink outline-none focus:border-series-1"
               />
             )}
