@@ -40,6 +40,8 @@ def _as_query(query: npt.ArrayLike, d: int) -> FloatArray:
     q = np.ascontiguousarray(query, dtype=np.float32).reshape(1, -1)
     if q.shape[1] != d:
         raise ValueError(f"Query has dimension {q.shape[1]}, index expects {d}.")
+    if not np.isfinite(q).all():
+        raise ValueError("Query contains NaN or infinite values.")
     return q
 
 
@@ -61,7 +63,7 @@ def resolve_search_params(
         nprobe = int(li.ivf.nprobe) if nprobe is None else int(nprobe)
         if not 1 <= nprobe <= nlist:
             raise ValueError(f"nprobe must be between 1 and nlist={nlist}, got {nprobe}.")
-        params = faiss.SearchParametersIVF(nprobe=nprobe)
+        params = faiss.SearchParametersIVF(nprobe=nprobe, max_codes=int(li.ivf.max_codes))
         used["nprobe"] = nprobe
     elif li.kind.is_hnsw:
         if nprobe is not None:
@@ -174,6 +176,8 @@ class GroundTruth:
         q = np.ascontiguousarray(queries, dtype=np.float32)
         if q.ndim != 2 or q.shape[1] != self.d:
             raise ValueError(f"Queries must have shape (n, {self.d}), got {q.shape}.")
+        if not np.isfinite(q).all():
+            raise ValueError("Queries contain NaN or infinite values.")
         excl = None if exclude_ids is None else np.asarray(exclude_ids, dtype=np.int64)
         out = np.full((len(q), k), -1, dtype=np.int64)
         if len(self.source) == 0 or len(q) == 0:

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+import uuid
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from pathlib import Path
@@ -118,9 +119,16 @@ def _install_error_handlers(app: FastAPI) -> None:
         return _error(400, "BAD_REQUEST", str(e))
 
     @app.exception_handler(Exception)
-    async def internal_error(_: Request, e: Exception) -> JSONResponse:
-        log.exception("Unhandled error")
-        return _error(500, "INTERNAL_ERROR", f"{type(e).__name__}: {e}", "See the server log.")
+    async def internal_error(request: Request, e: Exception) -> JSONResponse:
+        ref = uuid.uuid4().hex[:8]
+        log.exception("Unhandled error [ref %s]", ref)
+        session: Session = request.app.state.session
+        if session.demo_limits is not None:
+            # Public demo: don't leak exception internals to the client.
+            return _error(500, "INTERNAL_ERROR", f"Something went wrong (ref {ref}).")
+        return _error(
+            500, "INTERNAL_ERROR", f"{type(e).__name__}: {e} (ref {ref})", "See the server log."
+        )
 
 
 def _mount_frontend(app: FastAPI, static_dir: Path) -> None:
