@@ -29,7 +29,14 @@ export function useInfo() {
 }
 
 export function useIvfLists(enabled: boolean) {
-  return useQuery({ queryKey: ['ivf-lists'], queryFn: ({ signal }) => api.ivfLists(signal), staleTime: Infinity, enabled })
+  // One retry for a blip; after that the Overview shows the error with a "Try again" button.
+  return useQuery({
+    queryKey: ['ivf-lists'],
+    queryFn: ({ signal }) => api.ivfLists(signal),
+    staleTime: Infinity,
+    enabled,
+    retry: 1,
+  })
 }
 
 export function useListMembers(listNo: number | null, offset: number, limit: number) {

@@ -22,6 +22,8 @@ All notable changes to faissight are documented here. The format follows
 - Preserve large int64 IDs across API responses, searches, maps, HNSW traces, links and exports.
 - Reject non-finite vectors/queries and fractional raw-vector IDs at ingestion.
 - Display failed sweep-start and cancellation requests in the Tuner.
+- Show a persistent error with "Try again" on the Overview when the list-size request fails,
+  instead of an empty page after the toast disappears.
 
 ## [0.1.0] - 2026-09-29
 

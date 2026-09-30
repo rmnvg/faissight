@@ -198,3 +198,20 @@ test('large int64 ids survive searches, result links, reloads and HNSW traces', 
   await expect(page.getByText('Reconstructed trace.')).toBeVisible()
   await expect(page.getByRole('button', { name: 'Next step' })).toBeVisible()
 })
+
+test('overview: a failed list-size request shows an error with a working retry', async ({ page }) => {
+  await page.route('**/api/ivf/lists', (route) =>
+    route.fulfill({
+      status: 500,
+      contentType: 'application/json',
+      body: JSON.stringify({ error_code: 'INTERNAL', message: 'boom', hint: 'Check the server log.' }),
+    }),
+  )
+  await page.goto('/')
+  await expect(page.getByText('Could not read the inverted lists.')).toBeVisible({ timeout: 10_000 })
+  await expect(page.getByRole('main').getByText('boom Check the server log.')).toBeVisible()
+  await page.unroute('**/api/ivf/lists')
+  await page.getByRole('button', { name: 'Try again' }).click()
+  await expect(page.getByText('List size distribution')).toBeVisible()
+  await expect(page.getByText('Could not read the inverted lists.')).toHaveCount(0)
+})
