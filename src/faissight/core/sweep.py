@@ -275,9 +275,46 @@ def _meets(p: SweepPoint, target_recall: float, confident: bool) -> bool:
     return recall >= target_recall - 1e-9
 
 
-def ground_truth_ids(gt: GroundTruth, queries: QuerySet, k: int) -> IntArray:
-    """Exact top-k ids for every query (self excluded for sampled queries)."""
-    return gt.search_batch(queries.vectors, k, queries.exclude_ids)
+# Queries per untimed batch (exact ground truth, warm-up, probe ranks). Cancellation is
+# checked between batches, so a cancel waits for at most one batch of native work.
+QUERY_BATCH = 256
+
+
+def ground_truth_ids(
+    gt: GroundTruth, queries: QuerySet, k: int, progress: ProgressFn | None = None
+) -> IntArray:
+    """Exact top-k ids for every query (self excluded for sampled queries).
+
+    Runs in batches of :data:`QUERY_BATCH` queries, calling ``progress`` (fraction done,
+    message) before each, which is where a background job can be cancelled.
+    """
+    report = progress or (lambda frac, msg: None)
+    n = len(queries)
+    parts = []
+    for start in range(0, n, QUERY_BATCH):
+        report(start / n, f"Exact ground truth: {start}/{n} queries")
+        stop = start + QUERY_BATCH
+        excl = queries.exclude_ids[start:stop] if queries.exclude_ids is not None else None
+        parts.append(gt.search_batch(queries.vectors[start:stop], k, excl))
+    if not parts:
+        return np.empty((0, k), dtype=np.int64)
+    return np.concatenate(parts)
+
+
+def warm_up(
+    li: LoadedIndex,
+    vectors: FloatArray,
+    k: int,
+    params: object,
+    report: ProgressFn,
+    fraction: float,
+    message: str,
+) -> None:
+    """Run every query once, untimed, in batches; ``report(fraction, message)`` before each
+    batch is the cancellation checkpoint."""
+    for start in range(0, len(vectors), QUERY_BATCH):
+        report(fraction, message)
+        li.index.search(vectors[start : start + QUERY_BATCH], k, params=params)
 
 
 def sweep(
@@ -325,8 +362,16 @@ def sweep(
     points: list[SweepPoint] = []
     ranks, curve = None, None
     if param is SweepParam.NPROBE and assignments is not None:
-        report(0.0, "Locating true neighbours' lists")
-        ranks = ivf.truth_probe_ranks(li, queries.vectors, truth, assignments)
+        parts = []
+        for start in range(0, n, QUERY_BATCH):
+            report(0.0, f"Locating true neighbours' lists: {start}/{n} queries")
+            stop = start + QUERY_BATCH
+            parts.append(
+                ivf.truth_probe_ranks(
+                    li, queries.vectors[start:stop], truth[start:stop], assignments
+                )
+            )
+        ranks = np.concatenate(parts)
         curve = ivf.probe_coverage(ranks, int(li.ivf.nlist))
 
     with _TIMING_LOCK:
@@ -334,8 +379,15 @@ def sweep(
         faiss.omp_set_num_threads(1)
         try:
             for step, (v, sp) in enumerate(zip(vals, all_params, strict=True)):
-                report(step / len(vals), f"{param.value}={v}: warming up")
-                li.index.search(queries.vectors, k_search, params=sp)
+                warm_up(
+                    li,
+                    queries.vectors,
+                    k_search,
+                    sp,
+                    report,
+                    step / len(vals),
+                    f"{param.value}={v}: warming up",
+                )
                 latencies = np.empty(n * repeats, dtype=np.float64)
                 recalls = np.empty(n, dtype=np.float64)
                 rng = np.random.default_rng(seed)

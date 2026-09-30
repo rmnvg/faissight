@@ -43,6 +43,9 @@ All notable changes to faissight are documented here. The format follows
 
 ### Fixed
 
+- Cancelling a sweep or comparison takes effect within one batch of 256 queries. Exact
+  ground truth, warm-up and probe coverage used to run over the whole query set in one
+  native call (11 s for 5,000 queries over 1M vectors) before the job could stop.
 - HNSW inspection no longer copies the graph or the stored vectors: stats, level views and
   traces on a 1M-vector index peak at about 60 MB extra instead of 390–640 MB. Only drawn
   nodes are projected, and SQ/PQ storage is decoded per node (`benchmarks/hnsw_memory.py`).

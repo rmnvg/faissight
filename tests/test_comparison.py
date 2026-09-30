@@ -4,6 +4,7 @@ import pytest
 from typer.testing import CliRunner
 
 from faissight.cli import app
+from faissight.core import sweep as W
 from faissight.core.comparison import changed_queries, compare_indexes
 from faissight.core.loader import load_index
 from faissight.core.search import GroundTruth
@@ -110,3 +111,22 @@ def test_compare_reuses_truth_reports_progress_and_orders_changes(synthetic) -> 
     assert deltas == sorted(deltas, reverse=True)
     with pytest.raises(ValueError, match="truth must have shape"):
         compare_indexes(left, right, source, queries, truth=truth[:, :5])
+
+
+def test_compare_checks_for_cancellation_between_untimed_batches(synthetic, monkeypatch) -> None:
+    monkeypatch.setattr(W, "QUERY_BATCH", 8)
+    left, right = load_index(synthetic["flat_l2"]), load_index(synthetic["ivf_pq"])
+    source = from_arrays(left, np.load(synthetic["vectors"]))
+    seen = []
+
+    def report(frac, msg):
+        seen.append(msg)
+        if msg == "Warming up":
+            raise KeyboardInterrupt  # stands in for a job's cancellation error
+
+    previous = faiss.omp_get_max_threads()
+    with pytest.raises(KeyboardInterrupt):
+        compare_indexes(left, right, source, sample_queries(source, 20), progress=report)
+    # Three ground-truth batches of 8 queries, then the first warm-up checkpoint.
+    assert seen == [f"Exact ground truth: {i}/20 queries" for i in (0, 8, 16)] + ["Warming up"]
+    assert faiss.omp_get_max_threads() == previous

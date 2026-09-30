@@ -606,7 +606,11 @@ class Session:
         return sample_queries(self.source, n_queries, seed)
 
     def _sweep_data(
-        self, n_queries: int, k: int, seed: int
+        self,
+        n_queries: int,
+        k: int,
+        seed: int,
+        progress: Callable[[float, str], None] | None = None,
     ) -> tuple[QuerySet, npt.NDArray[np.int64]]:
         key = (n_queries, k, seed)
         with self._lock:
@@ -614,7 +618,9 @@ class Session:
                 self._sweep_inputs.move_to_end(key)
                 return self._sweep_inputs[key]
         qs = self.sweep_queries(n_queries, seed)
-        truth = ground_truth_ids(self.ground_truth, qs, k)
+        # Ground truth is the first phase of the job: report it without advancing the bar.
+        report = (lambda _f, msg: progress(0.0, msg)) if progress is not None else None
+        truth = ground_truth_ids(self.ground_truth, qs, k, report)
 
         def size(data: tuple[QuerySet, npt.NDArray[np.int64]]) -> int:
             q, t = data
@@ -672,7 +678,7 @@ class Session:
 
         def work(progress: Callable[[float, str], None]) -> SweepResult:
             progress(0.0, "Computing exact ground truth")
-            qs, truth = self._sweep_data(n_queries, k, seed)
+            qs, truth = self._sweep_data(n_queries, k, seed, progress)
             return sweep(
                 self.li,
                 qs,
@@ -779,7 +785,7 @@ class Session:
 
         def work(progress: Callable[[float, str], None]) -> comparison_mod.ComparisonResult:
             progress(0.0, "Computing exact ground truth")
-            qs, truth = self._sweep_data(n_queries, k, seed)
+            qs, truth = self._sweep_data(n_queries, k, seed, progress)
             return comparison_mod.compare_indexes(
                 self.li,
                 right,

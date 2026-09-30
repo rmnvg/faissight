@@ -371,7 +371,7 @@ def test_compare_job_reuses_sweep_ground_truth(synthetic, monkeypatch) -> None:
     job.wait(30)
     calls = []
     original = s._sweep_data
-    monkeypatch.setattr(s, "_sweep_data", lambda *a: calls.append(a) or original(*a))
+    monkeypatch.setattr(s, "_sweep_data", lambda *a: calls.append(a[:3]) or original(*a))
     job_id, cjob = s.compare_job(n_queries=15, right_nprobe=2)
     cjob.wait(30)
     assert cjob.result is not None
