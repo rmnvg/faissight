@@ -126,6 +126,20 @@ def sample_queries(source: VectorSource, n: int = DEFAULT_N_QUERIES, seed: int =
 # --- sweep -------------------------------------------------------------------------------
 
 
+N_WORST_QUERIES = 10
+
+
+@dataclass(frozen=True)
+class WorstQuery:
+    """One of the lowest-recall queries at a setting."""
+
+    query_no: int
+    """Row in the query set."""
+    id: int | None
+    """The query's own stored id for sampled queries; ``None`` for given queries."""
+    recall: float
+
+
 @dataclass(frozen=True)
 class SweepPoint:
     value: int
@@ -134,6 +148,47 @@ class SweepPoint:
     latency_mean_ms: float
     latency_p95_ms: float
     """Per-query latency, single-threaded."""
+    recall_ci_low: float | None = None
+    recall_ci_high: float | None = None
+    """Approximate 95% interval for the mean recall (normal approximation over queries)."""
+    recall_distribution: list[tuple[float, int]] = field(default_factory=list)
+    """Exact per-query recall distribution as ``(recall, n_queries)``, lowest recall first.
+
+    Recall@k takes few distinct values (at most k + 1), so this stays small.
+    """
+    worst_queries: list[WorstQuery] = field(default_factory=list)
+    """Up to ``N_WORST_QUERIES`` lowest-recall queries, worst first (ties by query order)."""
+
+    def fraction_below(self, target_recall: float) -> float | None:
+        """Share of queries whose own recall is below ``target_recall`` (None if unknown)."""
+        total = sum(n for _, n in self.recall_distribution)
+        if total == 0:
+            return None
+        below = sum(n for r, n in self.recall_distribution if r < target_recall - 1e-9)
+        return below / total
+
+
+def summarize_recalls(
+    recalls: npt.NDArray[np.float64], exclude_ids: IntArray | None
+) -> tuple[float, float, list[tuple[float, int]], list[WorstQuery]]:
+    """95% interval of the mean, exact distribution and worst queries for per-query recalls."""
+    n = len(recalls)
+    mean = float(recalls.mean())
+    if n > 1:
+        half = 1.96 * float(recalls.std(ddof=1)) / np.sqrt(n)
+        low, high = max(0.0, mean - half), min(1.0, mean + half)
+    else:
+        low, high = 0.0, 1.0
+    values, counts = np.unique(np.round(recalls, 6), return_counts=True)
+    distribution = [(float(v), int(c)) for v, c in zip(values, counts, strict=True)]
+    order = np.argsort(recalls, kind="stable")[:N_WORST_QUERIES]
+    worst = [
+        WorstQuery(
+            int(i), int(exclude_ids[i]) if exclude_ids is not None else None, float(recalls[i])
+        )
+        for i in order
+    ]
+    return low, high, distribution, worst
 
 
 @dataclass(frozen=True)
@@ -150,14 +205,24 @@ class SweepResult:
     environment: dict[str, str | int] = field(default_factory=dict)
     query_seed: int | None = None
 
-    def recommend(self, target_recall: float) -> SweepPoint | None:
+    def recommend(self, target_recall: float, *, confident: bool = False) -> SweepPoint | None:
         """Smallest parameter value whose mean recall meets ``target_recall``.
 
         Picks by parameter value, not measured latency, because latency is noisy and
-        cost grows with the parameter.
+        cost grows with the parameter. With ``confident``, the lower end of the recall
+        interval must meet the target instead of the mean.
         """
-        ok = [p for p in self.points if p.recall >= target_recall - 1e-9]
+        ok = [p for p in self.points if _meets(p, target_recall, confident)]
         return min(ok, key=lambda p: p.value) if ok else None
+
+    def fastest(self, target_recall: float, *, confident: bool = False) -> SweepPoint | None:
+        """The measured-fastest setting (mean latency) that meets ``target_recall``.
+
+        Often the same as :meth:`recommend`; when it isn't, the gap is usually timing noise
+        unless it is large or repeats across runs.
+        """
+        ok = [p for p in self.points if _meets(p, target_recall, confident)]
+        return min(ok, key=lambda p: (p.latency_mean_ms, p.value)) if ok else None
 
     def pareto(self) -> list[SweepPoint]:
         """Points not beaten on both recall and mean latency, fastest first."""
@@ -171,6 +236,11 @@ class SweepResult:
             )
         ]
         return sorted(front, key=lambda p: p.latency_mean_ms)
+
+
+def _meets(p: SweepPoint, target_recall: float, confident: bool) -> bool:
+    recall = p.recall_ci_low if confident and p.recall_ci_low is not None else p.recall
+    return recall >= target_recall - 1e-9
 
 
 def ground_truth_ids(gt: GroundTruth, queries: QuerySet, k: int) -> IntArray:
@@ -246,12 +316,17 @@ def sweep(
                                 row = row[row != excl[i]]
                             true_row = truth[i][truth[i] >= 0]
                             recalls[i] = np.isin(true_row, row[:k]).mean() if len(true_row) else 1.0
+                low, high, distribution, worst = summarize_recalls(recalls, excl)
                 points.append(
                     SweepPoint(
                         value=v,
                         recall=float(recalls.mean()),
                         latency_mean_ms=float(latencies.mean() * 1000),
                         latency_p95_ms=float(np.percentile(latencies, 95) * 1000),
+                        recall_ci_low=low,
+                        recall_ci_high=high,
+                        recall_distribution=distribution,
+                        worst_queries=worst,
                     )
                 )
         finally:

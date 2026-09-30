@@ -11,6 +11,7 @@ import { Overview } from './views/Overview'
 const ClusterMap = lazy(() => import('./views/ClusterMap'))
 const QueryExplorer = lazy(() => import('./views/QueryExplorer'))
 const Tuner = lazy(() => import('./views/Tuner'))
+const Compare = lazy(() => import('./views/Compare'))
 const Hnsw = lazy(() => import('./views/Hnsw'))
 const Quantization = lazy(() => import('./views/Quantization'))
 
@@ -20,7 +21,14 @@ export default function App() {
   const { mode, pref, setPref } = useTheme()
 
   // Focus mode hides the sidebar (screenshots, small screens). Toggle with the backslash key.
-  const [focus, setFocus] = useState(false)
+  // Narrow frames (phones, notebook iframes) start with it hidden and open it as an overlay.
+  const narrow = useNarrow()
+  const [focus, setFocus] = useState(narrow)
+  const [wasNarrow, setWasNarrow] = useState(narrow)
+  if (narrow !== wasNarrow) {
+    setWasNarrow(narrow)
+    setFocus(narrow)
+  }
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       const tag = (e.target as HTMLElement)?.tagName
@@ -35,25 +43,40 @@ export default function App() {
 
   return (
     <div className="flex h-full bg-page text-ink">
-      {!focus && (
-        <Sidebar
-          info={info.data}
-          view={view}
-          onNavigate={(v) => navigate(v)}
-          themePref={pref}
-          onTheme={setPref}
-          onFocus={() => setFocus(true)}
+      {!focus && narrow && (
+        <button
+          aria-label="Close the menu"
+          onClick={() => setFocus(true)}
+          className="fixed inset-0 z-30 bg-black/30 print:hidden"
         />
+      )}
+      {!focus && (
+        <div className={narrow ? 'fixed inset-y-0 left-0 z-40 flex shadow-xl' : 'flex'}>
+          <Sidebar
+            info={info.data}
+            view={view}
+            onNavigate={(v) => {
+              navigate(v)
+              if (narrow) setFocus(true)
+            }}
+            themePref={pref}
+            onTheme={setPref}
+            onFocus={() => setFocus(true)}
+          />
+        </div>
       )}
       <main className="relative min-w-0 flex-1 overflow-auto">
         {focus && (
-          <button
-            onClick={() => setFocus(false)}
-            className="absolute top-2 left-2 z-20 rounded-md border border-line bg-surface/90 px-2 py-1 text-xs text-ink-2 hover:text-ink print:hidden"
-            title="Show the sidebar (\)"
-          >
-            ☰ Menu
-          </button>
+          // On narrow frames the button sits in its own bar so it never covers a page heading.
+          <div className={narrow ? 'sticky top-0 z-20 border-b border-line bg-page/95 px-2 py-1.5 print:hidden' : ''}>
+            <button
+              onClick={() => setFocus(false)}
+              className={`${narrow ? '' : 'absolute top-2 left-2 z-20'} rounded-md border border-line bg-surface/90 px-2 py-1 text-xs text-ink-2 hover:text-ink print:hidden`}
+              title="Show the sidebar (\)"
+            >
+              ☰ Menu
+            </button>
+          </div>
         )}
         {info.isPending ? (
           <div className="p-8">
@@ -78,6 +101,7 @@ export default function App() {
               {view === 'overview' && <Overview info={info.data} />}
               {view === 'map' && <ClusterMap info={info.data} params={route.params} mode={mode} />}
               {view === 'tuner' && <Tuner info={info.data} params={route.params} />}
+              {view === 'compare' && <Compare info={info.data} params={route.params} />}
               {view === 'hnsw' && <Hnsw info={info.data} params={route.params} mode={mode} />}
               {view === 'quantization' && <Quantization info={info.data} />}
               {view === 'query' && (
@@ -89,4 +113,19 @@ export default function App() {
       </main>
     </div>
   )
+}
+
+const NARROW_QUERY = '(max-width: 767px)'
+
+/** True while the frame is narrower than Tailwind's `md` breakpoint. */
+function useNarrow(): boolean {
+  const [narrow, setNarrow] = useState(() => window.matchMedia?.(NARROW_QUERY).matches ?? false)
+  useEffect(() => {
+    const mq = window.matchMedia?.(NARROW_QUERY)
+    if (!mq) return
+    const onChange = () => setNarrow(mq.matches)
+    mq.addEventListener('change', onChange)
+    return () => mq.removeEventListener('change', onChange)
+  }, [])
+  return narrow
 }

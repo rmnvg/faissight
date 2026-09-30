@@ -1,6 +1,8 @@
 import type { UserId } from './types'
 import type {
   ApiErrorBody,
+  CompareJob,
+  CompareRequest,
   Dims,
   HnswGraph,
   HnswStats,
@@ -151,6 +153,12 @@ export const api = {
     (await request<SweepJob>(`sweep/${encodeURIComponent(jobId)}`, { method: 'DELETE' })).body,
   sweep: (jobId: string, signal?: AbortSignal) =>
     get<SweepJob>(`sweep/${encodeURIComponent(jobId)}`, signal),
+  /** Starts (or reuses) an index comparison; the job may still be running (HTTP 202). */
+  startCompare: (req: CompareRequest) => post<CompareJob>('compare', req),
+  cancelCompare: async (jobId: string) =>
+    (await request<CompareJob>(`compare/${encodeURIComponent(jobId)}`, { method: 'DELETE' })).body,
+  compare: (jobId: string, signal?: AbortSignal) =>
+    get<CompareJob>(`compare/${encodeURIComponent(jobId)}`, signal),
   hnswStats: (signal?: AbortSignal) => get<HnswStats>('hnsw/stats', signal),
   hnswGraph: (level: number, limit: number, around: UserId | null, signal?: AbortSignal) =>
     get<HnswGraph>(

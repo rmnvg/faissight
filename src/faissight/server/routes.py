@@ -14,12 +14,13 @@ from faissight.core import hnsw as H
 from faissight.core import hnsw_trace as HT
 from faissight.core import ivf
 from faissight.core import pq as PQ
+from faissight.core.comparison import ComparisonResult, IndexMeasurement, changed_queries
 from faissight.core.jobs import Job, JobStatus
 from faissight.core.projection import Projection
 from faissight.core.search import MissReason, NeighbourTrace, QueryReport
 from faissight.core.sweep import SweepResult, default_values, param_for
 from faissight.server import schemas as S
-from faissight.session import Session
+from faissight.session import Candidate, Session
 
 router = APIRouter()
 COORD_DECIMALS = 4
@@ -121,6 +122,7 @@ def info(session: SessionDep) -> S.InfoResponse:
         ground_truth_source=_truth_source(session) if li.is_supported else None,
         max_points=session.max_points,
         sweep=_sweep_defaults(session),
+        compare=[_candidate_out(i, c) for i, c in enumerate(session.candidates)],
         demo_limits=S.DemoLimitsOut(**session.demo_limits.__dict__)
         if session.demo_limits is not None
         else None,
@@ -414,6 +416,13 @@ def _sweep_response(job_id: str, job: Job[SweepResult], session: Session) -> JSO
                     recall=p.recall,
                     latency_mean_ms=p.latency_mean_ms,
                     latency_p95_ms=p.latency_p95_ms,
+                    recall_ci_low=p.recall_ci_low,
+                    recall_ci_high=p.recall_ci_high,
+                    recall_distribution=p.recall_distribution,
+                    worst_queries=[
+                        S.WorstQueryOut(query_no=w.query_no, id=w.id, recall=w.recall)
+                        for w in p.worst_queries
+                    ],
                 )
                 for p in r.points
             ],
@@ -426,7 +435,8 @@ def _sweep_response(job_id: str, job: Job[SweepResult], session: Session) -> JSO
         )
     body = S.SweepJobResponse(job_id=job_id, result=result, **snapshot)
     status = 202 if snapshot["status"] == "running" else 200
-    return JSONResponse(status_code=status, content=body.model_dump())
+    # mode="json" applies the large-id-as-string serializer (worst-query ids).
+    return JSONResponse(status_code=status, content=body.model_dump(mode="json"))
 
 
 @router.post(
@@ -464,6 +474,143 @@ def cancel_sweep(job_id: str, session: SessionDep) -> JSONResponse:
         raise ApiError(404, "NOT_FOUND", f"No sweep with id {job_id}.")
     session.jobs.cancel(job.key)
     return _sweep_response(job_id, job, session)
+
+
+# --- comparison --------------------------------------------------------------------------
+
+MAX_COMPARE_CHANGES = 200
+
+
+def _candidate_out(i: int, c: Candidate) -> S.CompareCandidateOut:
+    li = c.li
+    search_param: Literal["nprobe", "efSearch"] | None = None
+    if li.kind.is_ivf or li.kind.is_hnsw:
+        search_param = param_for(li).value
+    return S.CompareCandidateOut(
+        index=i,
+        name=c.name,
+        kind=li.kind.value,
+        ntotal=li.ntotal,
+        params=li.params.as_dict(),
+        search_param=search_param,
+        max_value=int(li.ivf.nlist) if li.kind.is_ivf else None,
+    )
+
+
+def _measurement_out(name: str, m: IndexMeasurement) -> S.CompareMeasurementOut:
+    return S.CompareMeasurementOut(
+        name=name,
+        kind=m.kind,
+        params=m.params,
+        serialized_bytes=m.serialized_bytes,
+        recall=m.recall,
+        recall_ci_low=m.recall_ci_low,
+        recall_ci_high=m.recall_ci_high,
+        latency_mean_ms=m.latency_mean_ms,
+        latency_p95_ms=m.latency_p95_ms,
+    )
+
+
+def _compare_response(
+    job_id: str, job: Job[ComparisonResult], session: Session, candidate: int
+) -> JSONResponse:
+    snapshot = job.as_dict()
+    result = None
+    if snapshot["status"] == "done" and job.result is not None:
+        r = job.result
+        changed = changed_queries(r)
+        li = session.li
+        result = S.CompareResultOut(
+            metric=r.metric,
+            k=r.k,
+            n_queries=r.n_queries,
+            query_origin="given" if r.query_origin == "given" else "sampled",
+            query_sha256=r.query_sha256,
+            query_seed=r.query_seed,
+            repeats=r.repeats,
+            seed=r.seed,
+            environment=r.environment,
+            left=_measurement_out(li.path.name if li.path else "in-memory index", r.left),
+            right=_measurement_out(session.candidates[candidate].name, r.right),
+            n_changed=len(changed),
+            n_improved=sum(d.right_recall > d.left_recall for d in r.differences),
+            n_worsened=sum(d.right_recall < d.left_recall for d in r.differences),
+            changes=[
+                S.QueryChangeOut(
+                    query_no=d.query_no,
+                    id=d.query_id,
+                    left_recall=d.left_recall,
+                    right_recall=d.right_recall,
+                    left_only=d.left_only,
+                    right_only=d.right_only,
+                    overlap=d.overlap,
+                )
+                for d in changed[:MAX_COMPARE_CHANGES]
+            ],
+            changes_truncated=len(changed) > MAX_COMPARE_CHANGES,
+        )
+    body = S.CompareJobResponse(job_id=job_id, result=result, **snapshot)
+    status = 202 if snapshot["status"] == "running" else 200
+    # mode="json" applies the large-id-as-string serializer.
+    return JSONResponse(status_code=status, content=body.model_dump(mode="json"))
+
+
+def _compare_job_or_404(session: Session, job_id: str) -> tuple[Job[ComparisonResult], int]:
+    found = session.get_compare_job(job_id)
+    if found is None:
+        raise ApiError(
+            404,
+            "NOT_FOUND",
+            f"No comparison with id {job_id}.",
+            "Start one with POST /api/compare.",
+        )
+    return found
+
+
+@router.post(
+    "/compare",
+    response_model=S.CompareJobResponse,
+    responses={202: {"model": S.CompareJobResponse}},
+)
+def start_compare(req: S.CompareRequest, session: SupportedDep) -> JSONResponse:
+    """Start (or reuse) a background comparison; poll ``GET /compare/{job_id}``."""
+    if not session.candidates:
+        raise ApiError(
+            400,
+            "NO_CANDIDATES",
+            "There is no other index to compare with.",
+            "Start faissight with --compare OTHER.index (and --vectors).",
+        )
+    job_id, job = session.compare_job(
+        req.candidate,
+        req.k,
+        req.n_queries,
+        req.repeats,
+        req.seed,
+        req.left_nprobe,
+        req.right_nprobe,
+        req.left_ef_search,
+        req.right_ef_search,
+    )
+    return _compare_response(job_id, job, session, req.candidate)
+
+
+@router.get(
+    "/compare/{job_id}",
+    response_model=S.CompareJobResponse,
+    responses={202: {"model": S.CompareJobResponse}},
+)
+def get_compare(job_id: str, session: SessionDep) -> JSONResponse:
+    job, candidate = _compare_job_or_404(session, job_id)
+    return _compare_response(job_id, job, session, candidate)
+
+
+@router.delete("/compare/{job_id}", response_model=S.CompareJobResponse)
+def cancel_compare(job_id: str, session: SessionDep) -> JSONResponse:
+    """Cancel a queued comparison or stop a running one at its next checkpoint."""
+    job, candidate = _compare_job_or_404(session, job_id)
+    session.jobs.cancel(job.key)
+    return _compare_response(job_id, job, session, candidate)
 
 
 # --- HNSW --------------------------------------------------------------------------------

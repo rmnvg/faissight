@@ -16,6 +16,7 @@ from typing import Any, TypeVar
 import numpy as np
 import numpy.typing as npt
 
+from faissight.core import comparison as comparison_mod
 from faissight.core import hnsw as hnsw_mod
 from faissight.core import hnsw_trace, ivf
 from faissight.core import pq as pq_mod
@@ -41,7 +42,13 @@ from faissight.core.projection import (
     index_fingerprint,
     place_points,
 )
-from faissight.core.search import GroundTruth, QueryReport, explain_query, resolve_query
+from faissight.core.search import (
+    GroundTruth,
+    QueryReport,
+    explain_query,
+    resolve_query,
+    resolve_search_params,
+)
 from faissight.core.sweep import (
     DEFAULT_N_QUERIES,
     QuerySet,
@@ -59,6 +66,7 @@ from faissight.core.vectors import (
     VectorSource,
     from_arrays,
     reconstruct_all,
+    validate_ids,
 )
 
 T = TypeVar("T")
@@ -98,6 +106,14 @@ class DemoLimitError(ValueError):
 
 
 @dataclass(frozen=True)
+class Candidate:
+    """Another index over the same vectors, to compare against the inspected one."""
+
+    name: str
+    li: LoadedIndex
+
+
+@dataclass(frozen=True)
 class DemoLimits:
     """Caps for a shared, read-only deployment (e.g. a Hugging Face Space)."""
 
@@ -131,6 +147,7 @@ class Session:
         disk_cache: bool = True,
         normalize_text: bool | None = None,
         demo_mode: bool = False,
+        compare: list[Any] | None = None,
     ) -> None:
         self.li: LoadedIndex = load_index(index)
         self.jobs = JobRunner()
@@ -193,6 +210,50 @@ class Session:
             self._embedder = embedder
         self.normalize_text = normalize_text
         self.demo_limits: DemoLimits | None = DemoLimits() if demo_mode else None
+        self.candidates: list[Candidate] = self._load_candidates(compare or [])
+
+    def _load_candidates(self, indexes: list[Any]) -> list[Candidate]:
+        """Load and check ``--compare`` indexes: same dimension, metric and ids as the main one."""
+        if not indexes:
+            return []
+        if self._raw is None:
+            raise InputError(
+                "COMPARE_NEEDS_VECTORS",
+                "Comparing indexes needs raw vectors for independent ground truth.",
+                "Pass --vectors (and --ids if needed) along with --compare.",
+            )
+        if not self.li.is_supported:
+            raise InputError(
+                "UNSUPPORTED_INDEX",
+                f"Cannot compare: {self.li.unsupported_reason}",
+                "Open a supported index to compare against.",
+            )
+        out: list[Candidate] = []
+        for value in indexes:
+            li = load_index(value)
+            name = li.path.name if li.path else f"in-memory index {len(out) + 1}"
+            if not li.is_supported:
+                raise InputError(
+                    "UNSUPPORTED_INDEX",
+                    f"{name}: {li.unsupported_reason}",
+                    "Compare a supported index.",
+                )
+            if li.d != self.li.d or li.metric != self.li.metric:
+                raise InputError(
+                    "COMPARE_MISMATCH",
+                    f"{name} has d={li.d}, {li.metric.value}; the main index has "
+                    f"d={self.li.d}, {self.li.metric.value}.",
+                    "Compare indexes built from the same vectors with the same metric.",
+                )
+            try:
+                validate_ids(li, self._raw.ids)
+            except VectorMismatchError as e:
+                raise InputError("COMPARE_MISMATCH", f"{name}: {e}", e.hint) from e
+            names = {c.name for c in out}
+            while name in names:
+                name = f"{name} ({len(out) + 1})"
+            out.append(Candidate(name, li))
+        return out
 
     # --- lazily computed state ------------------------------------------------------------
 
@@ -554,6 +615,98 @@ class Session:
         with self._lock:
             key = self._lazy.get("sweep_ids", {}).get(job_id)
         return self.jobs.get(key) if key is not None else None
+
+    # --- index comparison -----------------------------------------------------------------
+
+    def compare_job(
+        self,
+        candidate: int = 0,
+        k: int = 10,
+        n_queries: int = DEFAULT_N_QUERIES,
+        repeats: int = 3,
+        seed: int = 0,
+        left_nprobe: int | None = None,
+        right_nprobe: int | None = None,
+        left_ef_search: int | None = None,
+        right_ef_search: int | None = None,
+    ) -> tuple[str, Job[comparison_mod.ComparisonResult]]:
+        """Validate, then start (or return) a comparison with ``candidates[candidate]``.
+
+        The main index is the left side. Returns ``(job_id, job)``.
+        """
+        if not self.candidates:
+            raise ValueError("No indexes to compare with. Start faissight with --compare.")
+        if not 0 <= candidate < len(self.candidates):
+            raise ValueError(f"candidate must be 0-{len(self.candidates) - 1}, got {candidate}.")
+        if k < 1 or n_queries < 1:
+            raise ValueError("k and n_queries must be >= 1.")
+        if not 1 <= repeats <= 20 or not 0 <= seed <= 2**32 - 1:
+            raise ValueError("repeats must be 1-20 and seed must be 0-4294967295.")
+        right = self.candidates[candidate].li
+        # Reject bad search parameters now rather than inside the background job.
+        resolve_search_params(self.li, left_nprobe, left_ef_search)
+        resolve_search_params(right, right_nprobe, right_ef_search)
+        if self.demo_limits is not None:
+            lim = self.demo_limits
+            if repeats > 3 or n_queries > lim.max_sweep_queries or k > lim.max_sweep_k:
+                raise DemoLimitError(
+                    f"Comparisons use at most {lim.max_sweep_queries} queries, 3 repeats and "
+                    f"k <= {lim.max_sweep_k} here."
+                )
+            efs = [e for e in (left_ef_search, right_ef_search) if e is not None]
+            if efs and max(efs) > lim.max_ef_search:
+                raise DemoLimitError(f"efSearch is capped at {lim.max_ef_search} in this demo.")
+        key = (
+            "compare",
+            candidate,
+            k,
+            n_queries,
+            repeats,
+            seed,
+            left_nprobe,
+            right_nprobe,
+            left_ef_search,
+            right_ef_search,
+        )
+        job_id = hashlib.sha1(repr(key).encode()).hexdigest()[:12]
+
+        def work(progress: Callable[[float, str], None]) -> comparison_mod.ComparisonResult:
+            progress(0.0, "Computing exact ground truth")
+            qs, truth = self._sweep_data(n_queries, k, seed)
+            return comparison_mod.compare_indexes(
+                self.li,
+                right,
+                self.source,
+                qs,
+                k=k,
+                repeats=repeats,
+                seed=seed,
+                left_nprobe=left_nprobe,
+                right_nprobe=right_nprobe,
+                left_ef_search=left_ef_search,
+                right_ef_search=right_ef_search,
+                truth=truth,
+                progress=progress,
+            )
+
+        # Starting a comparison is explicit, so a failed or cancelled run reruns.
+        job = self.jobs.get_or_start(key, work, retry=True)
+        with self._lock:
+            mappings = self._lazy.setdefault("compare_ids", {})
+            for old_id, old_key in list(mappings.items()):
+                if self.jobs.get(old_key) is None:
+                    del mappings[old_id]
+            mappings[job_id] = key
+        return job_id, job
+
+    def get_compare_job(
+        self, job_id: str
+    ) -> tuple[Job[comparison_mod.ComparisonResult], int] | None:
+        """The comparison job and the candidate it compares with, if the job is still kept."""
+        with self._lock:
+            key = self._lazy.get("compare_ids", {}).get(job_id)
+        job = self.jobs.get(key) if key is not None else None
+        return (job, int(key[1])) if job is not None and key is not None else None
 
     def start_background(self) -> None:
         """Kick off work the UI will want soon: the default projection and the embedder."""

@@ -15,6 +15,14 @@ All notable changes to faissight are documented here. The format follows
 - Sweep cancellation in the Tuner and API, bounded background workers/queue, and bounded
   completed-job and query/ground-truth caches.
 - Release gates for tagged-commit CI and isolated installed-wheel smoke tests.
+- Compare view: `faissight serve --compare OTHER.index` (repeatable) and
+  `launch(..., compare=[...])` put other indexes over the same vectors side by side in the UI,
+  with recall intervals, mean/p95 latency, serialized size and changed neighbours per query.
+  Backed by `POST/GET/DELETE /api/compare` jobs.
+- Tuner diagnostics: 95% recall intervals, exact per-query recall distributions, the worst
+  queries at each setting (linked to the Query Explorer), an optional "95% lower bound meets
+  the target" rule, and the fastest measured setting reported apart from the recommendation.
+  `faissight sweep` prints the interval and the share of queries below the target.
 
 ### Fixed
 
@@ -22,6 +30,10 @@ All notable changes to faissight are documented here. The format follows
 - Preserve large int64 IDs across API responses, searches, maps, HNSW traces, links and exports.
 - Reject non-finite vectors/queries and fractional raw-vector IDs at ingestion.
 - Display failed sweep-start and cancellation requests in the Tuner.
+- On narrow frames (phones, notebook iframes) the sidebar starts hidden and opens as an
+  overlay instead of squeezing the page.
+- Show a persistent error with "Try again" on the Overview when the list-size request fails,
+  instead of an empty page after the toast disappears.
 
 ## [0.1.0] - 2026-09-29
 

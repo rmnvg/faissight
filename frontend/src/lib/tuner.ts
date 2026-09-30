@@ -1,10 +1,36 @@
 import type { SweepParam, SweepPoint } from '../api/types'
 
-/** Smallest parameter value whose mean recall meets the target (mirrors core.sweep). */
-export function recommend(points: SweepPoint[], target: number): SweepPoint | null {
-  const ok = points.filter((p) => p.recall >= target - 1e-9)
+/** Whether a point meets the target: its mean recall, or with `confident` the lower end of
+ * its 95% interval (mirrors core.sweep). */
+export function meets(p: SweepPoint, target: number, confident = false): boolean {
+  const recall = confident && p.recall_ci_low !== null ? p.recall_ci_low : p.recall
+  return recall >= target - 1e-9
+}
+
+/** Smallest parameter value that meets the target (mirrors core.sweep). */
+export function recommend(points: SweepPoint[], target: number, confident = false): SweepPoint | null {
+  const ok = points.filter((p) => meets(p, target, confident))
   if (ok.length === 0) return null
   return ok.reduce((a, b) => (b.value < a.value ? b : a))
+}
+
+/** Measured-fastest point (mean latency) that meets the target (mirrors core.sweep). */
+export function fastest(points: SweepPoint[], target: number, confident = false): SweepPoint | null {
+  const ok = points.filter((p) => meets(p, target, confident))
+  if (ok.length === 0) return null
+  return ok.reduce((a, b) =>
+    b.latency_mean_ms < a.latency_mean_ms || (b.latency_mean_ms === a.latency_mean_ms && b.value < a.value)
+      ? b
+      : a,
+  )
+}
+
+/** Share of queries whose own recall is below the target; null without a distribution. */
+export function fractionBelow(p: SweepPoint, target: number): number | null {
+  const total = p.recall_distribution.reduce((s, [, n]) => s + n, 0)
+  if (total === 0) return null
+  const below = p.recall_distribution.reduce((s, [r, n]) => (r < target - 1e-9 ? s + n : s), 0)
+  return below / total
 }
 
 /** "3.2x faster than the largest value tried", or null when not meaningful. */

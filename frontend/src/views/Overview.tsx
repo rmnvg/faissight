@@ -8,9 +8,10 @@ import {
   XAxis,
   YAxis,
 } from 'recharts'
+import { ApiError } from '../api/client'
 import { useIvfLists } from '../api/hooks'
 import type { Info, ListSizes } from '../api/types'
-import { Banner, Card, Spinner, StatTile } from '../components/ui'
+import { Banner, Card, RetryButton, Spinner, StatTile } from '../components/ui'
 import { fmtNum } from '../lib/format'
 import { navigate } from '../lib/route'
 
@@ -73,7 +74,18 @@ export function Overview({ info }: { info: Info }) {
 
       {isIvf && info.supported && (
         <>
-          {lists.isPending && <Spinner label="Reading inverted lists…" />}
+          {(lists.isPending || (lists.isError && lists.isFetching)) && (
+            <Spinner label="Reading inverted lists…" />
+          )}
+          {lists.isError && !lists.isFetching && (
+            <Banner tone="error">
+              <strong>Could not read the inverted lists.</strong> {lists.error.message}
+              {lists.error instanceof ApiError && lists.error.hint && ` ${lists.error.hint}`}
+              <div>
+                <RetryButton onClick={() => void lists.refetch()} />
+              </div>
+            </Banner>
+          )}
           {lists.data && <IvfHealth lists={lists.data} ntotal={info.ntotal} />}
         </>
       )}

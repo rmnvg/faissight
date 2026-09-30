@@ -126,6 +126,44 @@ test('tuner: sweep and get a recommendation', async ({ page }) => {
   await expect(page.getByText('faiss.SearchParametersIVF(nprobe=')).toBeVisible()
 })
 
+test('tuner: per-query recall and worst queries lead to the explorer', async ({ page }) => {
+  await page.goto('/#/tuner')
+  await page.getByRole('button', { name: 'Run sweep' }).click()
+  await expect(page.getByText(/Per-query recall@10 at nprobe \d+/)).toBeVisible({ timeout: 20_000 })
+  // The smallest value misses neighbours on this data; inspect it from the table.
+  await page.locator('section', { hasText: 'All measurements' }).locator('tbody tr').first().click()
+  await expect(page.getByText('Worst queries at nprobe 1')).toBeVisible()
+  await page.getByRole('radio', { name: '95% lower bound ≥ target' }).click()
+  await expect(page.getByText('smallest value confidently meeting the target')).toBeVisible()
+  // The e2e server has no --queries, so worst queries are stored ids the explorer can open.
+  await page.getByRole('button', { name: 'Explain' }).first().click()
+  await expect(page).toHaveURL(/#\/query\?id=\d+&k=10&nprobe=1/)
+  await expect(page.getByRole('heading', { name: 'Query explorer' })).toBeVisible()
+  await expect(page.getByText('Recall@10', { exact: true })).toBeVisible()
+})
+
+test('compare: side-by-side recall, latency, size and changed neighbours', async ({ page }) => {
+  await page.goto('/')
+  await page.getByRole('button', { name: /Compare/ }).click()
+  await expect(page.getByRole('heading', { name: 'Compare' })).toBeVisible()
+  await page.getByLabel('nprobe (other)').fill('1')
+  await page.getByRole('button', { name: 'Compare', exact: true }).click()
+  await expect(page.getByText('ivf_pq.index vs ivf_flat.index:')).toBeVisible({ timeout: 20_000 })
+  await expect(page).toHaveURL(/#\/compare\?job=\w+&candidate=0/)
+  const side = page.locator('section', { hasText: 'Side by side' })
+  await expect(side.getByRole('cell', { name: 'IVF_PQ', exact: true })).toBeVisible()
+  await expect(side.getByText('p95 latency')).toBeVisible()
+  await expect(page.getByText(/Queries with different results/)).toBeVisible()
+  const changes = page.locator('section', { hasText: 'Changed neighbours' }).locator('tbody tr')
+  await expect(changes.first()).toBeVisible()
+  // A reload keeps the comparison and the settings it ran with.
+  await page.reload()
+  await expect(page.getByText('ivf_pq.index vs ivf_flat.index:')).toBeVisible()
+  await expect(page.getByLabel('nprobe (other)')).toHaveValue('1')
+  await changes.first().getByRole('button', { name: 'Explain' }).click()
+  await expect(page.getByRole('heading', { name: 'Query explorer' })).toBeVisible()
+})
+
 test('hnsw graph: trace a search and see the layers and outcomes', async ({ page }) => {
   await page.goto('http://127.0.0.1:8798/#/hnsw?id=42&ef=16')
   await expect(page.getByText('Reconstructed trace.')).toBeVisible({ timeout: 20_000 })
@@ -197,4 +235,37 @@ test('large int64 ids survive searches, result links, reloads and HNSW traces', 
   expect(trace.nodes.ids.every((v: unknown) => typeof v === 'string')).toBe(true)
   await expect(page.getByText('Reconstructed trace.')).toBeVisible()
   await expect(page.getByRole('button', { name: 'Next step' })).toBeVisible()
+})
+
+test('overview: a failed list-size request shows an error with a working retry', async ({ page }) => {
+  await page.route('**/api/ivf/lists', (route) =>
+    route.fulfill({
+      status: 500,
+      contentType: 'application/json',
+      body: JSON.stringify({ error_code: 'INTERNAL', message: 'boom', hint: 'Check the server log.' }),
+    }),
+  )
+  await page.goto('/')
+  await expect(page.getByText('Could not read the inverted lists.')).toBeVisible({ timeout: 10_000 })
+  await expect(page.getByRole('main').getByText('boom Check the server log.')).toBeVisible()
+  await page.unroute('**/api/ivf/lists')
+  await page.getByRole('button', { name: 'Try again' }).click()
+  await expect(page.getByText('List size distribution')).toBeVisible()
+  await expect(page.getByText('Could not read the inverted lists.')).toHaveCount(0)
+})
+
+test('narrow frames hide the sidebar and open it as an overlay', async ({ page }) => {
+  await page.setViewportSize({ width: 390, height: 800 })
+  await page.goto('/')
+  await expect(page.getByRole('heading', { name: 'Overview' })).toBeVisible()
+  const nav = page.getByRole('navigation', { name: 'Views' })
+  await expect(nav).toBeHidden()
+  await page.getByRole('button', { name: '☰ Menu' }).click()
+  await expect(nav).toBeVisible()
+  await nav.getByRole('button', { name: /Tuner/ }).click()
+  await expect(page.getByRole('heading', { name: 'Tuner' })).toBeVisible()
+  await expect(nav).toBeHidden()
+  // Widening the frame brings the sidebar back.
+  await page.setViewportSize({ width: 1280, height: 800 })
+  await expect(nav).toBeVisible()
 })

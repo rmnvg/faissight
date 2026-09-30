@@ -109,6 +109,28 @@ def test_serve_starts_server(synthetic, fake_uvicorn) -> None:
     assert fake_uvicorn == []  # --no-browser
 
 
+def test_serve_with_compare(synthetic, fake_uvicorn) -> None:
+    result = runner.invoke(
+        app,
+        [
+            "serve",
+            str(synthetic["ivf_flat"]),
+            "--vectors",
+            str(synthetic["vectors"]),
+            "--compare",
+            str(synthetic["ivf_pq"]),
+            "--compare",
+            str(synthetic["hnsw_flat"]),
+            "--port",
+            "8916",
+            "--no-browser",
+        ],
+    )
+    assert result.exit_code == 0, result.output
+    assert "Comparing with ivf_pq.index (IVF_PQ)" in result.output
+    assert "Comparing with hnsw_flat.index (HNSW_FLAT)" in result.output
+
+
 def test_serve_opens_browser_when_ready(synthetic, fake_uvicorn) -> None:
     result = runner.invoke(app, ["serve", str(synthetic["flat_l2"]), "--port", "8912"])
     assert result.exit_code == 0, result.output
@@ -161,6 +183,8 @@ def test_serve_display_url_for_all_interfaces(synthetic, fake_uvicorn) -> None:
         (["--queries", "VECTORS_BAD_DIM"], "Queries have shape"),
         (["--meta", "MISSING"], "not found"),
         (["--max-points", "0"], "max_points"),
+        (["--compare", "IVF_PQ"], "needs raw vectors"),
+        (["--vectors", "VECTORS", "--compare", "MISSING"], "not found"),
     ],
 )
 def test_serve_input_errors(synthetic, fake_uvicorn, tmp_path, extra, message) -> None:
@@ -171,6 +195,8 @@ def test_serve_input_errors(synthetic, fake_uvicorn, tmp_path, extra, message) -
         "IDS": str(synthetic["ids_idmap"]),
         "VECTORS_BAD_DIM": str(bad),
         "MISSING": str(tmp_path / "nope.jsonl"),
+        "IVF_PQ": str(synthetic["ivf_pq"]),
+        "VECTORS": str(synthetic["vectors"]),
     }
     args = [subs.get(a, a) for a in extra]
     result = runner.invoke(app, ["serve", str(synthetic["ivf_flat"]), "--no-browser", *args])
@@ -319,7 +345,18 @@ def test_sweep_json(synthetic) -> None:
     assert [p["value"] for p in body["points"]] == [1, 16]
     assert body["recommended"] == 16 or body["points"][0]["recall"] >= 0.99
     assert body["truth_source"] == "reconstructed"
-    assert set(body["points"][0]) == {"value", "recall", "latency_mean_ms", "latency_p95_ms"}
+    assert set(body["points"][0]) == {
+        "value",
+        "recall",
+        "latency_mean_ms",
+        "latency_p95_ms",
+        "recall_ci_low",
+        "recall_ci_high",
+        "recall_distribution",
+        "worst_queries",
+    }
+    assert set(body["points"][0]["worst_queries"][0]) == {"query_no", "id", "recall"}
+    assert "fastest_meeting_target" in body
 
 
 def test_sweep_given_queries(synthetic) -> None:

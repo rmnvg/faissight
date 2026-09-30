@@ -59,7 +59,8 @@ report.recall, report.ivf_trace.min_nprobe_for_all
 | View | What it shows |
 |---|---|
 | **Query explorer** | Search by text, stored id or vector. Compares with exact ground truth and gives a reason for every missed neighbour: *cell not probed*, *quantization*, *transform* (PCA/OPQ), or *ranked out*, plus the smallest nprobe that finds them all. Shareable URLs, CSV/JSON export. |
-| **Tuner** | Recall@k and latency across nprobe or efSearch, the cheapest value for your target recall, and a copy-paste snippet to apply it. |
+| **Tuner** | Recall@k and latency across nprobe or efSearch, the cheapest value for your target recall (optionally with 95% confidence), per-query recall and the worst queries (one click to explain each), and a copy-paste snippet to apply it. |
+| **Compare** | Two indexes over the same vectors (say IVF-Flat vs IVF-PQ vs HNSW) on identical queries: recall with intervals, mean/p95 latency, serialized size, and which queries' neighbours changed. Start with `--compare OTHER.index`. |
 | **HNSW graph** | The layers of an HNSW graph and an animated, step-by-step replay of the search, showing which true neighbours were never reached. |
 | **Quantization** | How far PQ/SQ codes are from your raw vectors, the compression ratio, and how much they distort distances between near neighbours (the part that decides ranking). |
 | **Overview** | Inverted-list sizes, imbalance factor with a plain-English verdict, largest lists. |
@@ -108,6 +109,7 @@ ground truth is computed on reconstructed vectors, so PQ/SQ error isn't measured
 faissight serve INDEX [--vectors v.npy] [--ids ids.npy] [--meta chunks.jsonl]
                       [--embedder all-MiniLM-L6-v2] [--queries q.npy]
                       [--host 127.0.0.1] [--port 8765] [--no-browser] [--max-points 50000]
+                      [--compare other.index ...]
 faissight info INDEX                          # kind, wrappers, parameters
 faissight sweep INDEX --vectors v.npy [--param nprobe] [--target 0.95]
                       [--repeats 3] [--seed 0] [--json]
@@ -127,6 +129,12 @@ JSON exports include the query-set SHA-256, sampling seed, timing seed, repetiti
 and Python/NumPy/FAISS and platform versions. Supplied `--queries` use the first
 `--n-queries` rows; the seed controls sampling only when queries are drawn from stored vectors.
 
+Each setting also reports an approximate 95% interval for mean recall, the exact per-query
+recall distribution (so "how many queries fall below the target" is known, not just the
+mean) and its lowest-recall queries. The recommendation is the *smallest* value meeting the
+target; when a larger value happens to measure faster, it is reported separately as the
+fastest measured setting, since that gap is usually timing noise.
+
 ```bash
 faissight compare exact.index compressed.index --vectors vectors.npy \
   --queries queries.npy --right-nprobe 16 --repeats 5 --seed 42 --json > comparison.json
@@ -136,8 +144,17 @@ Comparison uses the same raw ground truth and queries for both indexes, reports 
 mean/p95 latency and serialized index size, and lists neighbours unique to either index
 for each query. Serialized size is not process RAM. Both indexes must use the same metric,
 input dimension and user IDs. Python users can call `faissight.core.compare_indexes` with
-loaded indexes, a `VectorSource`, and a `QuerySet`. The comparison is currently available
-through Python and the CLI.
+loaded indexes, a `VectorSource`, and a `QuerySet`.
+
+To compare in the UI, pass the other indexes to `serve` (or `launch(..., compare=[...])`);
+they must be built from the same `--vectors`:
+
+```bash
+faissight serve ivf_flat.index --vectors vectors.npy --compare ivf_pq.index --compare hnsw.index
+```
+
+The **Compare** view runs the same paired measurement as `faissight compare`, with each
+index's own nprobe/efSearch, and links changed queries to the Query Explorer.
 
 Raw-vector IDs are checked against index IDs before analysis. Supply `--ids` for custom
 IDs. The API uses numeric IDs through `2**53 - 1` and decimal strings above that limit,

@@ -50,6 +50,8 @@ export interface Info {
     max_sweep_k: number
     umap_from_cache_only: boolean
   } | null
+  /** Indexes given with --compare; empty when there are none. */
+  compare: CompareCandidate[]
   inputs: {
     raw_vectors: boolean
     metadata_rows: number | null
@@ -191,11 +193,26 @@ export interface MetadataRow {
 
 export type SweepParam = 'nprobe' | 'efSearch'
 
+export interface WorstQuery {
+  /** Row in the query set. */
+  query_no: number
+  /** The query's own stored id (sampled queries); null for given queries. */
+  id: UserId | null
+  recall: number
+}
+
 export interface SweepPoint {
   value: number
   recall: number
   latency_mean_ms: number
   latency_p95_ms: number
+  /** Approximate 95% interval for the mean recall. */
+  recall_ci_low: number | null
+  recall_ci_high: number | null
+  /** Exact per-query recall distribution as [recall, n_queries], lowest recall first. */
+  recall_distribution: [number, number][]
+  /** Lowest-recall queries, worst first. */
+  worst_queries: WorstQuery[]
 }
 
 export interface SweepResult {
@@ -229,6 +246,83 @@ export interface SweepRequest {
   n_queries: number
   repeats?: number
   seed?: number
+}
+
+export interface CompareCandidate {
+  index: number
+  name: string
+  kind: IndexKind
+  ntotal: number
+  params: Record<string, number | boolean | string>
+  /** The speed/recall knob of this index, if any. */
+  search_param: SweepParam | null
+  /** Largest accepted value (nlist for nprobe; null when unbounded). */
+  max_value: number | null
+}
+
+export interface CompareRequest {
+  candidate: number
+  k: number
+  n_queries: number
+  repeats?: number
+  seed?: number
+  left_nprobe?: number
+  right_nprobe?: number
+  left_ef_search?: number
+  right_ef_search?: number
+}
+
+export interface CompareMeasurement {
+  name: string
+  kind: IndexKind
+  params: Record<string, number>
+  /** Size of faiss.serialize_index; not resident memory. */
+  serialized_bytes: number
+  recall: number
+  recall_ci_low: number | null
+  recall_ci_high: number | null
+  latency_mean_ms: number
+  latency_p95_ms: number
+}
+
+export interface QueryChange {
+  query_no: number
+  /** The query's own stored id (sampled queries); null for given queries. */
+  id: UserId | null
+  left_recall: number
+  right_recall: number
+  left_only: UserId[]
+  right_only: UserId[]
+  overlap: number
+}
+
+export interface CompareResult {
+  metric: Metric
+  k: number
+  n_queries: number
+  query_origin: 'given' | 'sampled'
+  query_sha256: string
+  query_seed: number | null
+  repeats: number
+  seed: number
+  environment: Record<string, string | number>
+  left: CompareMeasurement
+  right: CompareMeasurement
+  n_changed: number
+  n_improved: number
+  n_worsened: number
+  /** Changed queries, largest recall change first (capped server-side). */
+  changes: QueryChange[]
+  changes_truncated: boolean
+}
+
+export interface CompareJob {
+  job_id: string
+  status: 'running' | 'done' | 'failed' | 'cancelled'
+  progress: number
+  message: string
+  error: string | null
+  result: CompareResult | null
 }
 
 export interface HnswLevelStats {

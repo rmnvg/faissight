@@ -29,7 +29,14 @@ export function useInfo() {
 }
 
 export function useIvfLists(enabled: boolean) {
-  return useQuery({ queryKey: ['ivf-lists'], queryFn: ({ signal }) => api.ivfLists(signal), staleTime: Infinity, enabled })
+  // One retry for a blip; after that the Overview shows the error with a "Try again" button.
+  return useQuery({
+    queryKey: ['ivf-lists'],
+    queryFn: ({ signal }) => api.ivfLists(signal),
+    staleTime: Infinity,
+    enabled,
+    retry: 1,
+  })
 }
 
 export function useListMembers(listNo: number | null, offset: number, limit: number) {
@@ -77,6 +84,18 @@ export function useSweep(jobId: string | null) {
   return useQuery({
     queryKey: ['sweep', jobId],
     queryFn: ({ signal }) => api.sweep(jobId as string, signal),
+    enabled: jobId !== null,
+    staleTime: Infinity,
+    retry: false,
+    refetchInterval: (q) => (q.state.data?.status === 'running' ? 400 : false),
+  })
+}
+
+/** Poll an index comparison until it finishes. */
+export function useCompare(jobId: string | null) {
+  return useQuery({
+    queryKey: ['compare', jobId],
+    queryFn: ({ signal }) => api.compare(jobId as string, signal),
     enabled: jobId !== null,
     staleTime: Infinity,
     retry: false,
