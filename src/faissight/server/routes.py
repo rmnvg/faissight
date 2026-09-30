@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from dataclasses import asdict
 from typing import Annotated, Literal
 
 import numpy as np
@@ -135,6 +136,7 @@ def info(session: SessionDep) -> S.InfoResponse:
             embedder_status=embedder_status,
             queries=len(session.queries) if session.queries is not None else None,
         ),
+        memory=S.MemoryOut(**asdict(session.memory_estimate())),
     )
 
 

@@ -50,6 +50,18 @@ export interface Info {
     max_sweep_k: number
     umap_from_cache_only: boolean
   } | null
+  memory: {
+    /** Raw vectors (n x d x 4); null without --vectors. */
+    vectors_bytes: number | null
+    /** Raw vectors are read from a memory-mapped file (--mmap), not held in RAM. */
+    vectors_mapped: boolean
+    /** Why --mmap could not keep the vectors mapped, if so. */
+    mmap_note: string | null
+    /** Memory needed to decode every stored vector from the index. */
+    reconstruct_bytes: number
+    /** The decoded vectors are already in memory. */
+    reconstructed: boolean
+  }
   /** Indexes given with --compare; empty when there are none. */
   compare: CompareCandidate[]
   inputs: {

@@ -12,6 +12,8 @@ import { ApiError } from '../api/client'
 import { useIvfLists } from '../api/hooks'
 import type { Info, ListSizes } from '../api/types'
 import { Banner, Card, RetryButton, Spinner, StatTile } from '../components/ui'
+import { hasQuantization } from '../lib/capabilities'
+import { fmtBytes } from '../lib/compare'
 import { fmtNum } from '../lib/format'
 import { navigate } from '../lib/route'
 
@@ -259,8 +261,25 @@ function ParamTable({ params }: { params: Info['params'] }) {
 
 function InputsCard({ info }: { info: Info }) {
   const i = info.inputs
+  const m = info.memory
+  const rawText =
+    m.vectors_bytes === null
+      ? 'not given (reconstructed)'
+      : `loaded (exact ground truth) · ${fmtBytes(m.vectors_bytes)}${
+          m.vectors_mapped ? ', memory-mapped from disk' : ' in memory'
+        }`
+  // Decoding the index is needed for PQ/SQ analysis, and for ground truth and maps without --vectors.
+  const decodedText = m.reconstructed
+    ? `${fmtBytes(m.reconstruct_bytes)} in memory`
+    : m.vectors_bytes === null
+      ? `about ${fmtBytes(m.reconstruct_bytes)} when ground truth or a map first needs them`
+      : hasQuantization(info)
+        ? `about ${fmtBytes(m.reconstruct_bytes)} when quantization analysis runs`
+        : 'not needed (the raw vectors are used)'
   const rows: [string, string][] = [
-    ['Raw vectors', i.raw_vectors ? 'loaded (exact ground truth)' : 'not given (reconstructed)'],
+    ['Raw vectors', rawText],
+    ...(m.mmap_note ? [['Memory map', `not applied: ${m.mmap_note}`] as [string, string]] : []),
+    ['Decoded vectors', decodedText],
     [
       'Metadata',
       i.metadata_rows === null

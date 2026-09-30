@@ -109,7 +109,7 @@ ground truth is computed on reconstructed vectors, so PQ/SQ error isn't measured
 faissight serve INDEX [--vectors v.npy] [--ids ids.npy] [--meta chunks.jsonl]
                       [--embedder all-MiniLM-L6-v2] [--queries q.npy]
                       [--host 127.0.0.1] [--port 8765] [--no-browser] [--max-points 50000]
-                      [--compare other.index ...]
+                      [--compare other.index ...] [--mmap]
 faissight info INDEX                          # kind, wrappers, parameters
 faissight sweep INDEX --vectors v.npy [--param nprobe] [--target 0.95]
                       [--repeats 3] [--seed 0] [--json]

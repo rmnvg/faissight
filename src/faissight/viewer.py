@@ -133,6 +133,7 @@ def launch(
     max_points: int = DEFAULT_MAX_POINTS,
     cache_root: Path | None = None,
     compare: list[Any] | None = None,
+    mmap: bool = False,
 ) -> Viewer:
     """Inspect a FAISS index in the browser.
 
@@ -140,7 +141,8 @@ def launch(
     arrays or ``.npy`` paths; ``metadata`` takes a path, a list of dicts or a DataFrame with
     an ``id`` column; ``embedder`` is a ``str -> vector`` callable or a sentence-transformers
     model name. ``compare`` takes other indexes (``faiss.Index`` or paths) over the same
-    vectors to compare in the Compare view; it needs ``vectors``.
+    vectors to compare in the Compare view; it needs ``vectors``. ``mmap`` memory-maps a
+    ``vectors`` .npy path instead of loading it into RAM.
 
     Returns a :class:`Viewer`. In a notebook, display it (make it the cell's last
     expression) to embed the UI. Elsewhere the browser opens unless ``open_browser=False``
@@ -156,6 +158,7 @@ def launch(
         max_points=max_points,
         cache_root=cache_root,
         compare=compare,
+        mmap=mmap,
     )
     session.start_background()
     viewer = Viewer(session, host=host, port=port, height=height)

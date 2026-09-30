@@ -8,6 +8,9 @@ All notable changes to faissight are documented here. The format follows
 
 ### Added
 
+- `--mmap` for `serve`, `sweep` and `compare` (and `launch(..., mmap=True)`) memory-maps the
+  raw vectors file. `/api/info.memory` and the Overview report the vectors' size, whether
+  they are mapped (and why not, if not), and what decoding the index would cost.
 - `faissight compare` and `core.compare_indexes`: paired recall/latency/size comparison
   with shared raw ground truth and per-query neighbour changes.
 - Configurable sweep timing repeats and seeds, plus query fingerprints and environment

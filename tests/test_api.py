@@ -813,6 +813,17 @@ def compare_client(synthetic):
     return _client(s)
 
 
+def test_info_reports_memory(ivf_client, synthetic) -> None:
+    mem = ivf_client.get("/api/info").json()["memory"]
+    assert mem["vectors_bytes"] == N * D * 4
+    assert mem["vectors_mapped"] is False
+    assert mem["reconstruct_bytes"] == N * (D * 4 + 8)
+    mapped = _client(
+        Session(synthetic["ivf_flat"], vectors=synthetic["vectors"], mmap=True, disk_cache=False)
+    )
+    assert mapped.get("/api/info").json()["memory"]["vectors_mapped"] is True
+
+
 def test_info_lists_compare_candidates(compare_client, ivf_client) -> None:
     cands = compare_client.get("/api/info").json()["compare"]
     assert [(c["index"], c["name"], c["kind"]) for c in cands] == [
