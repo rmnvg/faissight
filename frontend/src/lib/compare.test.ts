@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import type { CompareMeasurement } from '../api/types'
-import { fmtBytes, idList, recallIntervalsOverlap, relative, verdict } from './compare'
+import { fmtBytes, idList, recallIntervalsOverlap, relative, signedRecall, verdict } from './compare'
 
 const m = (over: Partial<CompareMeasurement>): CompareMeasurement => ({
   name: 'a.index',
@@ -55,5 +55,13 @@ describe('idList', () => {
     expect(idList([])).toBe('—')
     expect(idList([1, 2, '9007199254740993'])).toBe('1, 2, 9007199254740993')
     expect(idList([1, 2, 3, 4, 5, 6, 7], 3)).toBe('1, 2, 3 +4 more')
+  })
+})
+
+describe('signedRecall', () => {
+  it('signs real changes and hides rounding noise', () => {
+    expect(signedRecall(0.1234)).toBe('+0.123')
+    expect(signedRecall(-0.02)).toBe('−0.020')
+    expect(signedRecall(-0.0001)).toBe('0.000')
   })
 })

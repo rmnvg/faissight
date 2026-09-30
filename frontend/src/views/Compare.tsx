@@ -5,7 +5,7 @@ import { useCompare } from '../api/hooks'
 import type { CompareCandidate, CompareMeasurement, CompareRequest, CompareResult, Info, SweepParam } from '../api/types'
 import { Field, NumberInput } from '../components/form'
 import { Banner, Card, EmptyState, Progress, StatTile } from '../components/ui'
-import { fmtBytes, idList, recallIntervalsOverlap, relative, verdict } from '../lib/compare'
+import { fmtBytes, idList, recallIntervalsOverlap, relative, signedRecall, verdict } from '../lib/compare'
 import { downloadCSV, downloadJSON } from '../lib/exportData'
 import { fmtNum } from '../lib/format'
 import { intParam, navigate } from '../lib/route'
@@ -240,7 +240,7 @@ function Results({ result, leftParam }: { result: CompareResult; leftParam: Swee
   const rows: [string, string, string, string][] = [
     ['Kind', left.kind, right.kind, ''],
     ['Search parameters', paramText(left), paramText(right), ''],
-    [`Recall@${k}`, left.recall.toFixed(3), right.recall.toFixed(3), `${dRecall >= 0 ? '+' : '−'}${Math.abs(dRecall).toFixed(3)}`],
+    [`Recall@${k}`, left.recall.toFixed(3), right.recall.toFixed(3), signedRecall(dRecall)],
     ['95% interval', ci(left), ci(right), noisy ? 'intervals overlap' : ''],
     ['Mean latency', `${left.latency_mean_ms.toFixed(3)} ms`, `${right.latency_mean_ms.toFixed(3)} ms`, mean.text],
     ['p95 latency', `${left.latency_p95_ms.toFixed(3)} ms`, `${right.latency_p95_ms.toFixed(3)} ms`, p95.text],
@@ -267,7 +267,7 @@ function Results({ result, leftParam }: { result: CompareResult; leftParam: Swee
       <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
         <StatTile
           label={`Recall@${k} change`}
-          value={`${dRecall >= 0 ? '+' : '−'}${Math.abs(dRecall).toFixed(3)}`}
+          value={signedRecall(dRecall)}
           tone={dRecall > 0.0005 ? 'good' : dRecall < -0.0005 ? 'bad' : 'default'}
           caption={`${left.recall.toFixed(3)} → ${right.recall.toFixed(3)}`}
         />

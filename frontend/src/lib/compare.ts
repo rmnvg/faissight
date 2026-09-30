@@ -34,13 +34,16 @@ export function recallIntervalsOverlap(a: CompareMeasurement, b: CompareMeasurem
   return a.recall_ci_low <= b.recall_ci_high && b.recall_ci_low <= a.recall_ci_high
 }
 
+/** Signed recall change with 3 decimals; changes that round to zero show as "0.000". */
+export function signedRecall(d: number): string {
+  if (Math.abs(d) < 0.0005) return '0.000'
+  return `${d > 0 ? '+' : '−'}${Math.abs(d).toFixed(3)}`
+}
+
 /** One-sentence verdict: what switching from the left index to the right one does. */
 export function verdict(left: CompareMeasurement, right: CompareMeasurement, k: number): string {
   const d = right.recall - left.recall
-  const recall =
-    Math.abs(d) < 0.0005
-      ? `the same recall@${k}`
-      : `${d > 0 ? '+' : '−'}${Math.abs(d).toFixed(3)} recall@${k}`
+  const recall = Math.abs(d) < 0.0005 ? `the same recall@${k}` : `${signedRecall(d)} recall@${k}`
   const speed = relative(left.latency_p95_ms, right.latency_p95_ms, ['faster', 'slower'])
   const size = relative(left.serialized_bytes, right.serialized_bytes, ['smaller', 'larger'])
   const parts = [
