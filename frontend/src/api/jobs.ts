@@ -49,6 +49,7 @@ export function useJob<Req, J extends JobSnapshot>(opts: {
     onSuccess: (job) => client.setQueryData([kind, job.job_id], job),
   })
   // A job the server no longer has: it expired, was evicted, or the server restarted.
+  // React Query keeps the last data after an error: don't show a stale "running" job.
   const missing = poll.error instanceof ApiError && poll.error.status === 404
-  return { job: poll.data, poll, start, cancel, missing }
+  return { job: missing ? undefined : poll.data, poll, start, cancel, missing }
 }

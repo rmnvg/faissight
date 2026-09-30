@@ -322,3 +322,27 @@ test('compare: an expired comparison offers "Run again" with its settings', asyn
   await expect(side.getByRole('cell', { name: 'nprobe 4', exact: true })).toBeVisible()
   await expect(side.getByRole('cell', { name: 'nprobe 2', exact: true })).toBeVisible()
 })
+
+test('tuner: a server restart during a sweep shows "no longer on the server", not stale progress', async ({ page }) => {
+  await page.goto('/#/tuner')
+  await page.getByRole('textbox').first().fill(Array.from({ length: 16 }, (_, i) => i + 1).join(', '))
+  await page.getByLabel('queries (sampled)').fill('2000')
+  await page.getByLabel('Timing repeats').fill('20')
+  await page.getByRole('button', { name: 'Run sweep' }).click()
+  await expect(page.getByRole('progressbar')).toBeVisible()
+  const jobUrl = new URL(page.url().replace('#/', '')).searchParams.get('job')
+  // The restarted server no longer knows the job.
+  await page.route(`**/api/sweep/${jobUrl}`, (route) =>
+    route.fulfill({
+      status: 404,
+      contentType: 'application/json',
+      body: JSON.stringify({ error_code: 'NOT_FOUND', message: 'No sweep.', hint: null }),
+    }),
+  )
+  await expect(page.getByText('This sweep is no longer on the server')).toBeVisible()
+  await expect(page.getByRole('progressbar')).toHaveCount(0)
+  await expect(page.getByRole('button', { name: 'Run sweep' })).toBeEnabled()
+  // Clean up the real job.
+  await page.unroute(`**/api/sweep/${jobUrl}`)
+  await page.request.delete(`/api/sweep/${jobUrl}`)
+})
