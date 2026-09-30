@@ -148,3 +148,70 @@ def assignments(li: LoadedIndex) -> Assignments:
     list_nos = np.repeat(np.arange(ivf.nlist, dtype=np.int64), [len(p) for p in per_list])
     order = np.argsort(ids, kind="stable")
     return Assignments(ids=ids[order], list_nos=list_nos[order])
+
+
+# Cells of the (queries, nlist) probe-order matrices built at once: ~2M (~40 MB in total).
+_PROBE_ORDER_CELLS = 1 << 21
+
+
+def truth_probe_ranks(
+    li: LoadedIndex, queries: npt.ArrayLike, truth: npt.ArrayLike, assign: Assignments
+) -> IntArray:
+    """Where each true neighbour's list falls in its query's probe order, shape ``(n, k)``.
+
+    A neighbour is in a probed list iff its rank is below ``nprobe``, so these ranks say
+    what probing alone lets a search find at any nprobe. ``queries`` are input-space
+    vectors (any PreTransform is applied, as FAISS does); ``truth`` holds user ids with
+    ``-1`` padding, which maps to rank ``-1``. Ids that aren't stored get rank ``nlist``.
+    """
+    ivf = _ivf(li)
+    nlist = int(ivf.nlist)
+    q = li.to_core_space(np.ascontiguousarray(queries, dtype=np.float32))
+    t = np.asarray(truth, dtype=np.int64)
+    if t.ndim != 2 or len(t) != len(q):
+        raise ValueError(f"truth must have shape ({len(q)}, k), got {t.shape}.")
+    lists = assign.lookup(t)
+    ranks = np.full(t.shape, -1, dtype=np.int64)
+    chunk = max(1, _PROBE_ORDER_CELLS // max(nlist, 1))
+    rows = np.arange(chunk)[:, None]
+    for start in range(0, len(q), chunk):
+        # The coarse quantizer's own order: exactly the lists a search at nprobe visits.
+        _, order = ivf.quantizer.search(q[start : start + chunk], nlist)
+        m = len(order)
+        rank_of = np.full((m, nlist + 1), nlist, dtype=np.int64)
+        valid = order >= 0
+        rank_of[np.broadcast_to(rows[:m], order.shape)[valid], order[valid]] = np.nonzero(valid)[1]
+        block = lists[start : start + m]
+        # Column nlist stands for "not stored" (list -1).
+        block_ranks = rank_of[rows[:m], np.where(block >= 0, block, nlist)]
+        ranks[start : start + m] = np.where(t[start : start + m] >= 0, block_ranks, -1)
+    return ranks
+
+
+def probe_coverage(ranks: npt.ArrayLike, nlist: int) -> npt.NDArray[np.float64]:
+    """Mean share of each query's true neighbours in probed lists, for nprobe = 0..nlist.
+
+    ``coverage[v]`` caps recall@k at nprobe ``v``: a search can only return vectors from
+    the lists it probes. ``ranks`` come from :func:`truth_probe_ranks`; queries with no
+    true neighbours count as fully covered, matching how recall scores them.
+    """
+    r = np.asarray(ranks, dtype=np.int64)
+    if r.ndim != 2 or len(r) == 0:
+        raise ValueError("ranks must have shape (n, k) with n >= 1.")
+    n_valid = (r >= 0).sum(axis=1)
+    has_truth = n_valid > 0
+    weights = np.where(r >= 0, 1.0 / np.maximum(n_valid, 1)[:, None], 0.0) / len(r)
+    # A neighbour at rank j is covered from nprobe j + 1 on; unstored ones (rank nlist) never.
+    hist = np.bincount(np.minimum(r[r >= 0], nlist) + 1, weights[r >= 0], minlength=nlist + 2)
+    coverage = np.cumsum(hist)[: nlist + 1] + (~has_truth).sum() / len(r)
+    out: npt.NDArray[np.float64] = np.minimum(coverage, 1.0)
+    return out
+
+
+def query_probe_coverage(ranks: npt.ArrayLike, nprobe: int) -> npt.NDArray[np.float64]:
+    """Per query, the share of its true neighbours in the first ``nprobe`` lists (1.0 if none)."""
+    r = np.asarray(ranks, dtype=np.int64)
+    n_valid = (r >= 0).sum(axis=1)
+    covered = ((r >= 0) & (r < nprobe)).sum(axis=1)
+    out: npt.NDArray[np.float64] = np.where(n_valid > 0, covered / np.maximum(n_valid, 1), 1.0)
+    return out

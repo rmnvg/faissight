@@ -300,6 +300,8 @@ class WorstQueryOut(BaseModel):
     id: UserId | None
     """The query's own stored id (sampled queries); None for given queries."""
     recall: float
+    probe_coverage: float | None = None
+    """IVF: share of its true neighbours in the probed lists (caps its recall)."""
 
 
 class SweepPointOut(BaseModel):
@@ -313,6 +315,8 @@ class SweepPointOut(BaseModel):
     recall_distribution: list[tuple[float, int]]
     """``(recall, n_queries)`` pairs, lowest recall first."""
     worst_queries: list[WorstQueryOut]
+    probe_coverage: float | None = None
+    """IVF: mean share of true neighbours in probed lists, the most recall probing allows."""
 
 
 class SweepResultOut(BaseModel):
@@ -337,6 +341,39 @@ class SweepJobResponse(BaseModel):
     message: str
     error: str | None = None
     result: SweepResultOut | None = None
+
+
+class EvidenceOut(BaseModel):
+    label: str
+    value: str
+
+
+class SuggestionOut(BaseModel):
+    kind: Literal[
+        "PROBE_MORE",
+        "RANKING_LIMIT",
+        "SEARCH_WIDER",
+        "RECALL_PLATEAU",
+        "FAILING_QUERIES",
+        "LIST_IMBALANCE",
+    ]
+    title: str
+    detail: str
+    evidence: list[EvidenceOut]
+    sweep_values: list[int] | None
+    """Values for a follow-up sweep of the same parameter."""
+    view: Literal["overview", "quantization", "compare", "query"] | None
+    query_id: UserId | None
+    """With ``view == "query"``: the stored id to open."""
+    at_value: int | None
+    """The parameter value the evidence was measured at."""
+
+
+class SweepAdviceResponse(BaseModel):
+    target_recall: float
+    confident: bool
+    suggestions: list[SuggestionOut]
+    """Most important first; empty when nothing needs changing."""
 
 
 # --- comparison --------------------------------------------------------------------------

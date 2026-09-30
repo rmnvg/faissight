@@ -1,4 +1,5 @@
-import type { SweepParam, SweepPoint } from '../api/types'
+import type { Suggestion, SweepParam, SweepPoint } from '../api/types'
+import type { View } from './route'
 
 /** Whether a point meets the target: its mean recall, or with `confident` the lower end of
  * its 95% interval (mirrors core.sweep). */
@@ -72,4 +73,28 @@ export function prefersLogAxis(values: number[]): boolean {
   const min = Math.min(...values)
   const max = Math.max(...values)
   return min > 0 && max / min >= 8
+}
+
+/** Where a suggestion's "show me" button goes, or null when it has none. */
+export function suggestionLink(
+  s: Suggestion,
+  param: SweepParam,
+  k: number,
+): { view: View; params: Record<string, string | number>; label: string } | null {
+  switch (s.view) {
+    case 'query': {
+      if (s.query_id === null) return null
+      const params: Record<string, string | number> = { id: String(s.query_id), k }
+      if (s.at_value !== null) params[param === 'nprobe' ? 'nprobe' : 'ef'] = s.at_value
+      return { view: 'query', params, label: `Explain query id ${s.query_id}` }
+    }
+    case 'overview':
+      return { view: 'overview', params: {}, label: 'See list sizes' }
+    case 'quantization':
+      return { view: 'quantization', params: {}, label: 'See quantization error' }
+    case 'compare':
+      return { view: 'compare', params: {}, label: 'Compare indexes' }
+    default:
+      return null
+  }
 }

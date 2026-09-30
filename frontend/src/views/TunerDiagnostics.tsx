@@ -86,6 +86,7 @@ export function WorstQueries({
   target: number
 }) {
   const given = point.worst_queries.some((w) => w.id === null)
+  const hasCoverage = point.worst_queries.some((w) => w.probe_coverage !== null)
   return (
     <Card
       title={`Worst queries at ${param} ${point.value}`}
@@ -103,6 +104,14 @@ export function WorstQueries({
             <tr>
               <th className="py-1 pr-3 font-normal">Query</th>
               <th className="py-1 pr-3 text-right font-normal">Recall@{k}</th>
+              {hasCoverage && (
+                <th
+                  className="py-1 pr-3 text-right font-normal"
+                  title="Share of its true neighbours in the probed lists; the rest of its misses were ranked out"
+                >
+                  In probed lists
+                </th>
+              )}
               <th className="py-1 font-normal" />
             </tr>
           </thead>
@@ -117,6 +126,11 @@ export function WorstQueries({
                 >
                   {w.recall.toFixed(2)}
                 </td>
+                {hasCoverage && (
+                  <td className="tabular py-1.5 pr-3 text-right text-ink-2">
+                    {w.probe_coverage === null ? '—' : w.probe_coverage.toFixed(2)}
+                  </td>
+                )}
                 <td className="py-1.5 text-right">
                   {w.id !== null && (
                     <button

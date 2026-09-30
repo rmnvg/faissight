@@ -4,6 +4,7 @@ import faiss
 import numpy as np
 import pytest
 
+from faissight.core import ivf
 from faissight.core import search as S
 from faissight.core import sweep as W
 from faissight.core import vectors as V
@@ -323,3 +324,44 @@ def test_fraction_below() -> None:
     assert p.fraction_below(0.9) == 0.25
     assert p.fraction_below(0.95) == 0.75
     assert W.SweepPoint(1, 0.8, 0.1, 0.2).fraction_below(0.9) is None
+
+
+# --- probe coverage ------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize("name", ["ivf_flat", "ivf_pq", "pca_ivf_flat"])
+def test_sweep_probe_coverage_bounds_recall(synthetic, name) -> None:
+    li = load_index(synthetic[name])
+    src = V.from_arrays(li, np.load(synthetic["vectors"]))
+    gt = S.GroundTruth(src, li.metric)
+    qs = W.sample_queries(src, 60)
+    truth = W.ground_truth_ids(gt, qs, K)
+    r = W.sweep(
+        li, qs, truth, values=[1, 2, 4, NLIST], k=K, repeats=1, assignments=ivf.assignments(li)
+    )
+    assert r.coverage_curve is not None
+    assert len(r.coverage_curve) == NLIST + 1
+    assert np.all(np.diff(r.coverage_curve) >= 0)
+    assert r.coverage_at(NLIST) == pytest.approx(1.0)
+    for p in r.points:
+        assert p.probe_coverage == pytest.approx(r.coverage_at(p.value))
+        assert p.recall <= p.probe_coverage + 1e-9
+        for w in p.worst_queries:
+            assert w.probe_coverage is not None
+            assert w.recall <= w.probe_coverage + 1e-9
+        if name == "ivf_flat":
+            # Exact codes: every miss is an unprobed list.
+            assert p.recall == pytest.approx(p.probe_coverage)
+    needed = r.nprobe_for_coverage(0.9)
+    assert needed is not None
+    assert r.coverage_at(needed) >= 0.9 > r.coverage_at(needed - 1)
+    assert r.nprobe_for_coverage(1.01) is None
+
+
+def test_sweep_without_assignments_has_no_coverage(ivf_setup, synthetic) -> None:
+    li, _, _, qs, truth = ivf_setup
+    r = W.sweep(li, qs, truth, values=[1, 2], k=K, repeats=1)
+    assert r.coverage_curve is None
+    assert r.coverage_at(1) is None
+    assert r.nprobe_for_coverage(0.5) is None
+    assert all(p.probe_coverage is None for p in r.points)

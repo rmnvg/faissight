@@ -37,6 +37,7 @@ import {
   speedup,
 } from '../lib/tuner'
 import { RecallBreakdown, WorstQueries } from './TunerDiagnostics'
+import { NextSteps } from './TunerNextSteps'
 
 const AXIS = { fill: 'var(--muted)', fontSize: 11 }
 
@@ -82,6 +83,12 @@ export default function Tuner({ info, params }: { info: Info; params: URLSearchP
       )
       return
     }
+    setFormError(null)
+    start.mutate({ param, values, k, n_queries: nQueries, repeats, seed })
+  }
+  // A suggested follow-up: same query set and timing settings, new values.
+  const sweepValues = (values: number[]) => {
+    setValuesText(values.join(', '))
     setFormError(null)
     start.mutate({ param, values, k, n_queries: nQueries, repeats, seed })
   }
@@ -178,8 +185,16 @@ export default function Tuner({ info, params }: { info: Info; params: URLSearchP
         {result.repeats} timing repeats · seed {result.seed} · query set {result.query_sha256.slice(0, 12)}.
         JSON exports include measurement settings and environment versions.
       </p>}
-      {result && (
-        <Results result={result} target={target} setTarget={setTarget} info={info} />
+      {result && jobId && (
+        <Results
+          result={result}
+          jobId={jobId}
+          target={target}
+          setTarget={setTarget}
+          info={info}
+          onSweep={sweepValues}
+          sweeping={start.isPending}
+        />
       )}
     </div>
   )
@@ -187,14 +202,20 @@ export default function Tuner({ info, params }: { info: Info; params: URLSearchP
 
 function Results({
   result,
+  jobId,
   target,
   setTarget,
   info,
+  onSweep,
+  sweeping,
 }: {
   result: SweepResult
+  jobId: string
   target: number
   setTarget: (t: number) => void
   info: Info
+  onSweep: (values: number[]) => void
+  sweeping: boolean
 }) {
   const hasRefine = info.has_refine
   const [confident, setConfident] = useState(false)
@@ -219,6 +240,7 @@ function Results({
   }))
   const focus = pts.find((p) => p.value === focusValue) ?? rec ?? best
   const hasDiagnostics = pts.some((p) => p.recall_distribution.length > 0)
+  const hasCoverage = pts.some((p) => p.probe_coverage !== null)
 
   return (
     <>
@@ -273,7 +295,7 @@ function Results({
           caption={
             rec
               ? `smallest value ${confident ? 'confidently ' : ''}meeting the target`
-              : `best was ${best.recall.toFixed(3)} at ${best.value}; try larger values`
+              : `best was ${best.recall.toFixed(3)} at ${best.value}; see next steps`
           }
         />
         <StatTile
@@ -306,6 +328,17 @@ function Results({
           value measuring faster is usually timing noise; rerun with more timing repeats before preferring it.
         </Banner>
       )}
+
+      <NextSteps
+        jobId={jobId}
+        param={result.param}
+        k={result.k}
+        target={target}
+        confident={confident}
+        targetMet={rec !== null}
+        onSweep={onSweep}
+        sweeping={sweeping}
+      />
 
       <EvaluationChecklist
         items={evaluationChecklist(info, {
@@ -523,6 +556,7 @@ function Results({
                       recall_ci_low: p.recall_ci_low,
                       recall_ci_high: p.recall_ci_high,
                       fraction_below_target: fractionBelow(p, target),
+                      probe_coverage: p.probe_coverage,
                       latency_mean_ms: p.latency_mean_ms,
                       latency_p95_ms: p.latency_p95_ms,
                     })) as never,
@@ -553,6 +587,14 @@ function Results({
                 <th className="py-1 pr-3 text-right font-normal">Recall@{result.k}</th>
                 <th className="py-1 pr-3 text-right font-normal whitespace-nowrap">95% interval</th>
                 <th className="py-1 pr-3 text-right font-normal">Queries &lt; target</th>
+                {hasCoverage && (
+                  <th
+                    className="py-1 pr-3 text-right font-normal"
+                    title="Share of true neighbours in the probed lists: the most recall probing allows"
+                  >
+                    In probed lists
+                  </th>
+                )}
                 <th className="py-1 pr-3 text-right font-normal">Mean ms</th>
                 <th className="py-1 pr-3 text-right font-normal">p95 ms</th>
                 <th className="py-1 font-normal">Notes</th>
@@ -580,6 +622,11 @@ function Results({
                     <td className="tabular py-1.5 pr-3 text-right text-ink-2">
                       {below === null ? '—' : `${(below * 100).toFixed(0)}%`}
                     </td>
+                    {hasCoverage && (
+                      <td className="tabular py-1.5 pr-3 text-right text-ink-2">
+                        {p.probe_coverage === null ? '—' : p.probe_coverage.toFixed(3)}
+                      </td>
+                    )}
                     <td className="tabular py-1.5 pr-3 text-right text-ink-2">{p.latency_mean_ms.toFixed(3)}</td>
                     <td className="tabular py-1.5 pr-3 text-right text-ink-2">{p.latency_p95_ms.toFixed(3)}</td>
                     <td className="py-1.5 text-xs text-ink-2">
@@ -599,7 +646,7 @@ function Results({
           </table>
         </Card>
         <Card className="xl:col-span-2" title="Apply it" subtitle={rec ? `${result.param} = ${rec.value}` : undefined}>
-          {snippet ? <CodeBlock code={snippet} /> : <p className="text-sm text-ink-2">No value met the target. Add larger values and re-run.</p>}
+          {snippet ? <CodeBlock code={snippet} /> : <p className="text-sm text-ink-2">No value met the target. See the suggested next steps.</p>}
         </Card>
       </div>
     </>

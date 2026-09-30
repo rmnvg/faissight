@@ -16,6 +16,7 @@ import type {
   ProjectionOrStatus,
   SearchRequest,
   SearchResponse,
+  SweepAdvice,
   SweepJob,
   SweepRequest,
 } from './types'
@@ -153,6 +154,11 @@ export const api = {
     (await request<SweepJob>(`sweep/${encodeURIComponent(jobId)}`, { method: 'DELETE' })).body,
   sweep: (jobId: string, signal?: AbortSignal) =>
     get<SweepJob>(`sweep/${encodeURIComponent(jobId)}`, signal),
+  sweepAdvice: (jobId: string, target: number, confident: boolean, signal?: AbortSignal) =>
+    get<SweepAdvice>(
+      `sweep/${encodeURIComponent(jobId)}/advice?target=${target}&confident=${confident}`,
+      signal,
+    ),
   /** Starts (or reuses) an index comparison; the job may still be running (HTTP 202). */
   startCompare: (req: CompareRequest) => post<CompareJob>('compare', req),
   cancelCompare: async (jobId: string) =>

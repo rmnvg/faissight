@@ -2,7 +2,10 @@
 
 from __future__ import annotations
 
-from fastapi import APIRouter
+from dataclasses import asdict
+from typing import Annotated
+
+from fastapi import APIRouter, Query
 from fastapi.responses import JSONResponse
 
 from faissight.core.jobs import Job
@@ -52,9 +55,15 @@ def _sweep_response(job_id: str, job: Job[SweepResult], session: Session) -> JSO
                     recall_ci_high=p.recall_ci_high,
                     recall_distribution=p.recall_distribution,
                     worst_queries=[
-                        S.WorstQueryOut(query_no=w.query_no, id=w.id, recall=w.recall)
+                        S.WorstQueryOut(
+                            query_no=w.query_no,
+                            id=w.id,
+                            recall=w.recall,
+                            probe_coverage=w.probe_coverage,
+                        )
                         for w in p.worst_queries
                     ],
+                    probe_coverage=p.probe_coverage,
                 )
                 for p in r.points
             ],
@@ -93,6 +102,35 @@ def get_sweep(job_id: str, session: SessionDep) -> JSONResponse:
             404, "NOT_FOUND", f"No sweep with id {job_id}.", "Start one with POST /api/sweep."
         )
     return _sweep_response(job_id, job, session)
+
+
+@router.get("/sweep/{job_id}/advice", response_model=S.SweepAdviceResponse)
+def sweep_advice(
+    job_id: str,
+    session: SessionDep,
+    target: Annotated[float, Query(ge=0.0, le=1.0, description="Target recall@k.")] = 0.95,
+    confident: Annotated[
+        bool, Query(description="Judge by the 95% lower bound of recall, not the mean.")
+    ] = False,
+) -> S.SweepAdviceResponse:
+    """Suggested next steps for a finished sweep, with the measurements behind each."""
+    job = session.get_sweep_job(job_id)
+    if job is None:
+        raise ApiError(
+            404, "NOT_FOUND", f"No sweep with id {job_id}.", "Start one with POST /api/sweep."
+        )
+    if not job.is_done or job.result is None:
+        raise ApiError(
+            409, "NOT_READY", "This sweep hasn't finished.", "Poll GET /api/sweep/{job_id} first."
+        )
+    suggestions = session.sweep_advice(job.result, target, confident=confident)
+    return S.SweepAdviceResponse(
+        target_recall=target,
+        confident=confident,
+        suggestions=[
+            S.SuggestionOut.model_validate({**asdict(s), "kind": s.kind.value}) for s in suggestions
+        ],
+    )
 
 
 @router.delete("/sweep/{job_id}", response_model=S.SweepJobResponse)

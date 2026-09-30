@@ -8,6 +8,12 @@ All notable changes to faissight are documented here. The format follows
 
 ### Added
 
+- Suggested next steps in the Tuner, `faissight sweep` and `GET /api/sweep/{job_id}/advice`:
+  probe more lists, compression/PCA/ranking limits, larger or no more efSearch, failing
+  queries behind a good mean, and uneven IVF lists, each with the measurements behind it
+  and a one-click follow-up (a suggested sweep, or the view that shows more). IVF sweeps
+  now report probe coverage, the share of true neighbours in probed lists, per setting and
+  per worst query (`core.advise`, `SweepPoint.probe_coverage`).
 - "How far to trust this" checklist in the Tuner and Compare views: whether queries are
   held-out or sampled stored vectors, whether ground truth is exact, how precisely recall is
   measured (and how many queries would tighten it), and that ANN recall is not relevance.

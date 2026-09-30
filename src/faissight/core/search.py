@@ -327,6 +327,19 @@ class IvfTrace:
         return counts
 
 
+def probed_miss_reason(li: LoadedIndex) -> MissReason:
+    """Why this index misses a true neighbour whose inverted list *was* probed.
+
+    When both apply (e.g. PCA + PQ) this is QUANTIZATION; separating them would need
+    exact distances in the transformed space.
+    """
+    if li.kind in (IndexKind.IVF_PQ, IndexKind.IVF_SQ):
+        return MissReason.QUANTIZATION
+    if any(t.d_out < t.d_in for t in li.transforms):
+        return MissReason.TRANSFORM
+    return MissReason.RANKED_OUT
+
+
 def trace_ivf(
     li: LoadedIndex,
     query: npt.ArrayLike,
@@ -350,14 +363,7 @@ def trace_ivf(
     probe_rank[order[order >= 0]] = np.arange(nlist)[order >= 0]
 
     found_rank = {int(i): r for r, i in enumerate(result.ids) if i >= 0}
-    # When both apply (e.g. PCA + PQ) we report QUANTIZATION; separating them would need
-    # exact distances in the transformed space.
-    if li.kind in (IndexKind.IVF_PQ, IndexKind.IVF_SQ):
-        probed_miss = MissReason.QUANTIZATION
-    elif any(t.d_out < t.d_in for t in li.transforms):
-        probed_miss = MissReason.TRANSFORM
-    else:
-        probed_miss = MissReason.RANKED_OUT
+    probed_miss = probed_miss_reason(li)
     truth_ids = truth.ids
     truth_lists = assignments.lookup(truth_ids)
     neighbours: list[NeighbourTrace] = []
