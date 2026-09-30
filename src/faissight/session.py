@@ -756,6 +756,10 @@ class Session:
             confident=confident,
             max_p95_ms=max_p95_ms,
             label=label,
+            # Only when ground truth used raw vectors: for reconstructed ground truth the
+            # index itself is the corpus, already covered by index_sha1, and fingerprinting
+            # would mean decoding it just to hash it.
+            source=self._raw if not result.truth_reconstructed else None,
         )
 
     # --- index comparison -----------------------------------------------------------------

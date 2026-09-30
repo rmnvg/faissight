@@ -580,6 +580,34 @@ def test_save_a_run_and_compare_with_it(ivf_client) -> None:
     _assert_error(ivf_client.get("/api/sweep/nope/run"), 404, "NOT_FOUND")
 
 
+def test_saved_run_preserves_large_int64_ids() -> None:
+    # A worst_queries id beyond 2**53-1 must round-trip through JSON exactly, like every
+    # other endpoint that returns ids: bare JSON numbers get rounded by JS's float64.
+    x = np.random.default_rng(5).normal(size=(200, 8)).astype(np.float32)
+    ids = np.arange(len(x), dtype=np.int64) + 2**53 + 1
+    index = faiss.IndexIVFFlat(faiss.IndexFlatL2(8), 8, 4)
+    index.train(x)
+    index.add_with_ids(x, ids)
+    index.nprobe = 1
+    client = _client(Session(index, vectors=x, ids=ids, disk_cache=False))
+    job_id = client.post("/api/sweep", json={"values": [1], "n_queries": 20, "k": 5}).json()[
+        "job_id"
+    ]
+    _wait_sweep(client, job_id)
+
+    response = client.get(f"/api/sweep/{job_id}/run", params={"target": 0.0})
+    assert response.status_code == 200, response.text
+    points = response.json()["points"]
+    worst_ids = [w["id"] for p in points for w in p["worst_queries"] if w["id"] is not None]
+    assert worst_ids  # sampled queries: every worst query has the query's own stored id
+    assert all(isinstance(i, str) for i in worst_ids)
+    assert all(int(i) in ids.tolist() for i in worst_ids)
+    # The raw response text must never carry a bare (roundable) large integer literal.
+    for i in worst_ids:
+        assert f": {i}," not in response.text
+        assert f": {i}}}" not in response.text
+
+
 def test_sweep_advice_hnsw(hnsw_client) -> None:
     r = hnsw_client.post("/api/sweep", json={"values": [16], "n_queries": 20})
     job_id = r.json()["job_id"]

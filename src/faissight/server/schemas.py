@@ -384,6 +384,79 @@ class SweepAdviceResponse(BaseModel):
     """Most important first; empty when nothing needs changing."""
 
 
+class RunIndexOut(BaseModel):
+    sha1: str
+    name: str | None
+    kind: str
+    class_chain: list[str]
+    ntotal: int
+    d: int
+    metric: str
+    params: dict[str, Scalar]
+
+
+class RunQueriesOut(BaseModel):
+    origin: Literal["given", "sampled"]
+    n: int
+    sha256: str
+    seed: int | None
+
+
+class RunSettingsOut(BaseModel):
+    param: Literal["nprobe", "efSearch"]
+    values: list[int]
+    k: int
+    repeats: int
+    seed: int
+    truth_source: Literal["raw", "reconstructed"]
+    ground_truth_fingerprint: str | None = None
+    """Identifies the raw --vectors corpus ground truth was computed on; None when the
+    index itself is the ground-truth identity (reconstructed) or the run predates this."""
+
+
+class RunDecisionOut(BaseModel):
+    target_recall: float
+    confident: bool
+    max_p95_ms: float | None
+    status: Literal["ok", "recall", "latency"]
+    recommended: int | None
+
+
+class RunWorstQueryOut(BaseModel):
+    query_no: int
+    id: UserId | None
+    """The query's own stored id (sampled queries); None for given queries."""
+    recall: float
+
+
+class RunPointOut(BaseModel):
+    value: int
+    recall: float
+    recall_ci_low: float | None
+    recall_ci_high: float | None
+    latency_mean_ms: float
+    latency_p95_ms: float
+    probe_coverage: float | None
+    recall_distribution: list[tuple[float, int]]
+    worst_queries: list[RunWorstQueryOut]
+
+
+class SweepRunOut(BaseModel):
+    """A saveable record of a finished sweep (``faissight.sweep-run``); see ``core.runs``."""
+
+    format: str
+    version: int
+    label: str | None
+    created_at: str
+    faissight: str
+    index: RunIndexOut
+    queries: RunQueriesOut
+    settings: RunSettingsOut
+    environment: dict[str, str | int]
+    decision: RunDecisionOut
+    points: list[RunPointOut]
+
+
 class BaselineRequest(BaseModel):
     target: float = Field(0.95, ge=0.0, le=1.0)
     confident: bool = False
@@ -417,6 +490,8 @@ class BaselineResponse(BaseModel):
     baseline_index: str | None
     """File name of the baseline's index, when it had one."""
     points: list[PointDeltaOut]
+    comparable: bool
+    """False when no setting could be judged (see ``notes``): not a pass, nothing ran."""
     regressed: bool
     recall_comparable: bool
     latency_comparable: bool

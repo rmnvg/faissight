@@ -56,6 +56,28 @@ All notable changes to faissight are documented here. The format follows
 
 ### Fixed
 
+- Saved-run comparisons that couldn't judge anything (different query sets, no shared
+  settings, incompatible metrics) reported `regressed: false` and exited 0 like a clean
+  pass. `RunComparison.comparable` (and the API's `comparable` field) now distinguishes
+  "compared and clean" from "nothing was checked"; `sweep --baseline` and `runs diff` exit
+  4 for the latter, and the CLI/Tuner say so plainly.
+- Saved runs are now validated, not just shape-checked: NaN/Infinity (JSON's own or the
+  non-standard `NaN`/`Infinity` tokens some encoders emit), out-of-range recall, negative
+  latency, and duplicate point values are rejected on save and on load, instead of silently
+  producing a wrong or empty comparison.
+- A saved run's identity now covers the distance metric and (for raw ground truth) a
+  fingerprint of the `--vectors` corpus, so comparing across a metric change or a swapped
+  vectors file is flagged as not comparable instead of silently diffing unrelated numbers.
+- `GET /api/sweep/{job_id}/run` returned bare JSON integers for stored ids, so a "Save run"
+  download could silently round an id beyond 2**53-1 (JavaScript's exact integer range)
+  before it ever reached disk. It now uses the same string encoding as every other
+  endpoint that returns ids.
+- `faissight sweep` built a run record (hashing the whole index file) even without `--save`
+  or `--baseline`; it's now built only when one of them is given.
+- Loading a malformed file into the Tuner's "Compare with a saved run" left the previous
+  comparison on screen looking current; the old result now clears immediately. Changing the
+  regression thresholds without re-running is now flagged so a stale verdict can't be
+  mistaken for one that reflects the current inputs.
 - A projection whose disk-cache write fails (read-only or full disk) is still returned,
   with `cache_warning` in `/api/projection`, a Cluster map banner and a server log line;
   before, the write error failed the whole projection.

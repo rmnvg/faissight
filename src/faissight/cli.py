@@ -400,8 +400,9 @@ def sweep(
 ) -> None:
     """Measure recall@k and latency across nprobe/efSearch values.
 
-    Exits with code 2 if no value reaches --target (within --max-p95-ms, if given), and
-    otherwise 3 if --baseline shows a regression, so it can gate CI.
+    Exits with code 2 if no value reaches --target (within --max-p95-ms, if given), 3 if
+    --baseline shows a regression, or 4 if --baseline couldn't be compared at all (not a
+    pass -- see the printed notes), so it can gate CI.
     """
     parsed_values = _values_option(values)
     base_run = None
@@ -445,21 +446,22 @@ def sweep(
     rec = choice.point
     fastest = result.fastest(target, max_p95_ms=max_p95_ms)
     suggestions = session.sweep_advice(result, target, max_p95_ms=max_p95_ms)
-    record = session.sweep_run(result, target, max_p95_ms=max_p95_ms, label=label)
-    if save is not None:
-        runs.save_run(record, save)
-        err_console.print(f"Saved the run to {escape(str(save))}")
-    comparison = (
-        runs.compare_runs(
-            base_run,
-            record,
-            max_recall_drop=max_recall_drop,
-            max_p95_increase=max_p95_increase,
-            min_p95_increase_ms=min_p95_increase_ms,
-        )
-        if base_run is not None
-        else None
-    )
+    # Building a record re-hashes the whole index file (session.index_sha1): skip it
+    # unless something will actually use it.
+    comparison = None
+    if save is not None or base_run is not None:
+        record = session.sweep_run(result, target, max_p95_ms=max_p95_ms, label=label)
+        if save is not None:
+            runs.save_run(record, save)
+            err_console.print(f"Saved the run to {escape(str(save))}")
+        if base_run is not None:
+            comparison = runs.compare_runs(
+                base_run,
+                record,
+                max_recall_drop=max_recall_drop,
+                max_p95_increase=max_p95_increase,
+                min_p95_increase_ms=min_p95_increase_ms,
+            )
 
     if as_json:
         typer.echo(
@@ -496,10 +498,13 @@ def sweep(
         raise typer.Exit(code=2)
     if comparison is not None and comparison.regressed:
         raise typer.Exit(code=3)
+    if comparison is not None and not comparison.comparable:
+        raise typer.Exit(code=4)
 
 
 def _comparison_json(cmp: runs.RunComparison) -> dict[str, object]:
     return {
+        "comparable": cmp.comparable,
         "regressed": cmp.regressed,
         "recall_comparable": cmp.recall_comparable,
         "latency_comparable": cmp.latency_comparable,
@@ -543,13 +548,18 @@ def _print_comparison(cmp: runs.RunComparison, param: str) -> None:
         console.print(
             f"Recommended {param}: {cmp.baseline_recommended} before, {cmp.recommended} now."
         )
-    if cmp.regressed:
+    if not cmp.comparable:
+        console.print(
+            "[red]Couldn't compare[/]: no setting could be judged against the baseline "
+            "(see the reasons above). This is not a pass: nothing was checked."
+        )
+    elif cmp.regressed:
         console.print(
             f"[red]Regressed[/]: recall fell by more than {cmp.max_recall_drop:g}, or p95 grew "
             f"by more than {cmp.max_p95_increase:.0%} and {cmp.min_p95_increase_ms:g} ms, at "
             f"{len(cmp.regressions)} setting(s)."
         )
-    elif cmp.points:
+    else:
         console.print("[green]No regressions[/] against the baseline.")
 
 
@@ -879,7 +889,11 @@ def runs_diff(
     ] = 0.05,
     as_json: Annotated[bool, typer.Option("--json", help="Print JSON instead of a table.")] = False,
 ) -> None:
-    """Compare two saved runs setting by setting; exits with code 3 on a regression."""
+    """Compare two saved runs setting by setting.
+
+    Exits with code 3 on a regression, or 4 if nothing could be judged (see --json
+    notes): that is not a pass, it means the two runs weren't comparable.
+    """
     try:
         base, cur = runs.load_run(baseline), runs.load_run(current)
     except (OSError, runs.RunFormatError) as e:
@@ -897,3 +911,5 @@ def runs_diff(
         _print_comparison(cmp, str(cur["settings"]["param"]))
     if cmp.regressed:
         raise typer.Exit(code=3)
+    if not cmp.comparable:
+        raise typer.Exit(code=4)

@@ -47,16 +47,35 @@ export function BaselineCompare({ jobId, param, decision }: { jobId: string; par
       }),
   })
   const [baseline, setBaseline] = useState<unknown>(null)
+  // Snapshot of the thresholds the shown result was actually compared with: if the inputs
+  // below have since changed, the result on screen no longer reflects them.
+  const [comparedWith, setComparedWith] = useState<{ recallDrop: number; p95Increase: number; p95Floor: number } | null>(null)
   const r = compare.data
+  const stale =
+    r !== undefined &&
+    comparedWith !== null &&
+    (comparedWith.recallDrop !== recallDrop ||
+      comparedWith.p95Increase !== p95Increase ||
+      comparedWith.p95Floor !== p95Floor)
+
+  const runCompare = (data: unknown) => {
+    setComparedWith({ recallDrop, p95Increase, p95Floor })
+    compare.mutate(data)
+  }
 
   const onFile = async (file: File | undefined) => {
     if (!file) return
+    // Clear whatever's on screen before the new file is even read: a bad file, or one
+    // that's still loading, must never leave an earlier file's verdict looking current.
+    compare.reset()
+    setBaseline(null)
+    setComparedWith(null)
     setFileName(file.name)
     setReadError(null)
     try {
       const data: unknown = JSON.parse(await file.text())
       setBaseline(data)
-      compare.mutate(data)
+      runCompare(data)
     } catch {
       setReadError(`${file.name} isn't JSON. Use a file saved with "Save run" or sweep --save.`)
     }
@@ -113,7 +132,7 @@ export function BaselineCompare({ jobId, param, decision }: { jobId: string; par
             className={INPUT}
           />
         </label>
-        <button type="button" className={BUTTON} disabled={baseline === null || compare.isPending} onClick={() => compare.mutate(baseline)}>
+        <button type="button" className={BUTTON} disabled={baseline === null || compare.isPending} onClick={() => runCompare(baseline)}>
           Compare again
         </button>
       </div>
@@ -122,12 +141,17 @@ export function BaselineCompare({ jobId, param, decision }: { jobId: string; par
       {compare.error && <p className="mt-3 text-sm text-critical">{compare.error.message}</p>}
       {r && (
         <div className={`mt-3 flex flex-col gap-3 ${compare.isPending ? 'opacity-60' : ''}`}>
-          <Banner tone={r.regressed ? 'error' : r.points.length ? 'info' : 'warning'}>
+          {stale && (
+            <Banner tone="warning">
+              The thresholds below changed since this comparison ran. Click "Compare again" to check against them.
+            </Banner>
+          )}
+          <Banner tone={r.regressed ? 'error' : r.comparable ? 'info' : 'warning'}>
             {r.regressed
               ? `Regressed at ${r.points.filter((p) => p.recall_regressed || p.latency_regressed).length} of ${r.points.length} settings`
-              : r.points.length
+              : r.comparable
                 ? 'No regressions against this run'
-                : 'Nothing to compare setting by setting'}
+                : "Nothing was compared — see why below, this isn't a pass"}
             {r.baseline_label || r.baseline_created_at
               ? ` (baseline ${[r.baseline_label, r.baseline_created_at?.slice(0, 16).replace('T', ' ')].filter(Boolean).join(', ')})`
               : ''}

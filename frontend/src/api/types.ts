@@ -319,6 +319,8 @@ export interface BaselineComparison {
   baseline_created_at: string | null
   baseline_index: string | null
   points: PointDelta[]
+  /** False when no setting could be judged (see notes): not a pass, nothing ran. */
+  comparable: boolean
   regressed: boolean
   recall_comparable: boolean
   latency_comparable: boolean

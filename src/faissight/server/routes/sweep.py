@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import asdict
-from typing import Annotated, Any
+from typing import Annotated
 
 from fastapi import APIRouter, Query
 from fastapi.responses import JSONResponse
@@ -118,7 +118,7 @@ def _finished_sweep(session: Session, job_id: str) -> SweepResult:
     return job.result
 
 
-@router.get("/sweep/{job_id}/run")
+@router.get("/sweep/{job_id}/run", response_model=S.SweepRunOut)
 def sweep_run(
     job_id: str,
     session: SessionDep,
@@ -126,16 +126,21 @@ def sweep_run(
     confident: Annotated[bool, Query(description="Judge by the 95% lower bound.")] = False,
     max_p95_ms: Annotated[float | None, Query(gt=0, description="p95 budget (ms).")] = None,
     label: Annotated[str | None, Query(max_length=200)] = None,
-) -> dict[str, Any]:
+) -> S.SweepRunOut:
     """A saveable record of a finished sweep: index and query identity, settings,
-    environment, measurements, the decision for a target, and the worst queries."""
-    return session.sweep_run(
+    environment, measurements, the decision for a target, and the worst queries.
+
+    Uses ``S.SweepRunOut`` (not a bare dict) so stored ids beyond JavaScript's exact
+    integer range are serialized as strings, like every other endpoint that returns ids.
+    """
+    record = session.sweep_run(
         _finished_sweep(session, job_id),
         target,
         confident=confident,
         max_p95_ms=max_p95_ms,
         label=label,
     )
+    return S.SweepRunOut.model_validate(record)
 
 
 @router.post("/sweep/{job_id}/baseline", response_model=S.BaselineResponse)
@@ -167,6 +172,7 @@ def sweep_baseline(job_id: str, req: S.BaselineRequest, session: SessionDep) -> 
             )
             for d in cmp.points
         ],
+        comparable=cmp.comparable,
         regressed=cmp.regressed,
         recall_comparable=cmp.recall_comparable,
         latency_comparable=cmp.latency_comparable,

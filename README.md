@@ -122,21 +122,30 @@ faissight cache info | clear [--older-than-days 30] [--max-mb 500]
 ```
 
 `faissight sweep` exits with code 2 when no value reaches `--target` (within the p95 budget
-of `--max-p95-ms`, if given), and with code 3 when `--baseline` shows a regression, so it can
-guard recall and latency in CI.
+of `--max-p95-ms`, if given), 3 when `--baseline` shows a regression, and 4 when `--baseline`
+couldn't be compared at all (different query sets, no overlapping values, ...) &mdash; that is
+not a pass, and CI should treat it as a failure, not silently skip the check. `faissight runs
+diff` uses the same three failure codes.
 
 ### Saved runs and baselines
 
 `faissight sweep --save run.json` (or **Save run** in the Tuner) keeps a sweep as JSON: the
-index's sha1 and parameters, the query set's fingerprint, the settings, the environment,
+index's sha1, parameters and distance metric, the query set's fingerprint, a fingerprint of
+the raw `--vectors` corpus ground truth was computed on, the settings, the environment,
 every measurement, the recommendation for your target, and the worst queries. Compare a
 later sweep with it using `--baseline run.json`, the Tuner's **Compare with a saved run**, or
 `faissight runs diff`. A setting regresses when its recall drops by more than
 `--max-recall-drop` (0.01), or when its p95 grows by more than `--max-p95-increase` (20%)
 *and* by more than `--min-p95-increase-ms` (0.05 ms): sub-millisecond timings vary between
-runs, and the floor keeps that noise from failing CI. Recall is compared only on the same
-query set and k. Latency is compared only when both runs were measured with the same FAISS
-version and machine. Otherwise the comparison says why it doesn't judge them.
+runs, and the floor keeps that noise from failing CI.
+
+Recall is compared only when both runs used the same k, parameter, query set, metric and
+ground-truth corpus; latency only when both were measured with the same FAISS version and
+machine. Otherwise the comparison says why, and reports itself as not comparable rather than
+reporting a false "no regressions". A saved run is validated on load and before it's written:
+every recall and latency number must be finite and in range, point values must be unique, and
+the identifying fingerprints must be present, so a corrupted or hand-edited file is rejected
+rather than silently compared against.
 
 ```bash
 faissight sweep index.faiss --vectors v.npy --queries eval.npy --save baseline.json
