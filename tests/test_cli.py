@@ -524,3 +524,48 @@ def test_sweep_save_baseline_and_runs_diff(synthetic, tmp_path) -> None:
     bad = runner.invoke(app, [*args, "--baseline", str(tmp_path / "bad.json")])
     assert bad.exit_code == 1
     assert "Not a faissight sweep run" in bad.output
+
+
+def test_sweep_diff_incomparable_runs_exits_4(synthetic, tmp_path) -> None:
+    args = ["sweep", str(synthetic["ivf_pq"]), "--vectors", str(synthetic["vectors"])]
+    args += ["--values", "1,4", "--n-queries", "20", "--target", "0.1"]
+    base = tmp_path / "base.json"
+    assert runner.invoke(app, [*args, "--save", str(base)]).exit_code == 0
+
+    # A different query set: nothing can be judged. This must not look like a pass.
+    other_queries = json.loads(base.read_text())
+    other_queries["queries"]["sha256"] = "f" * 64
+    (tmp_path / "other-queries.json").write_text(json.dumps(other_queries))
+
+    result = runner.invoke(app, [*args, "--baseline", str(tmp_path / "other-queries.json")])
+    assert result.exit_code == 4, result.output
+    assert "Couldn't compare" in result.output
+    assert "not a pass" in result.output.lower()
+
+    result_json = runner.invoke(
+        app, [*args, "--baseline", str(tmp_path / "other-queries.json"), "--json"]
+    )
+    assert result_json.exit_code == 4
+    body = json.loads(result_json.stdout)["baseline"]
+    assert body["comparable"] is False
+    assert body["regressed"] is False  # distinct from "compared and clean"
+
+    diff = runner.invoke(app, ["runs", "diff", str(tmp_path / "other-queries.json"), str(base)])
+    assert diff.exit_code == 4
+    assert runner.invoke(app, ["runs", "diff", str(base), str(base)]).exit_code == 0
+
+
+def test_sweep_only_builds_a_run_record_when_needed(synthetic, monkeypatch) -> None:
+    from faissight.session import Session
+
+    def boom(self, *a, **k):
+        raise AssertionError("sweep_run was called without --save or --baseline")
+
+    monkeypatch.setattr(Session, "sweep_run", boom)
+    args = ["sweep", str(synthetic["ivf_flat"]), "--vectors", str(synthetic["vectors"])]
+    args += ["--n-queries", "20"]
+    plain = runner.invoke(app, args)
+    assert plain.exit_code == 0, plain.output
+    as_json = runner.invoke(app, [*args, "--json"])
+    assert as_json.exit_code == 0, as_json.output
+    assert json.loads(as_json.stdout)["baseline"] is None

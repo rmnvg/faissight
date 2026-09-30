@@ -9,21 +9,30 @@ beyond a threshold.
 
 from __future__ import annotations
 
+import hashlib
 import json
+import math
 import time
 from dataclasses import dataclass, field
 from importlib import metadata
 from pathlib import Path
 from typing import Any
 
+import numpy as np
+
 from faissight.core.sweep import SweepResult
 from faissight.core.types import LoadedIndex
+from faissight.core.vectors import VectorSource
 
 RUN_FORMAT = "faissight.sweep-run"
 RUN_VERSION = 1
 
 # Environment keys that change single-threaded latency; recall doesn't depend on them.
 _LATENCY_ENV_KEYS = ("faiss", "system", "machine", "processor", "threads")
+
+# Rows sampled (evenly spaced) to fingerprint a raw vector corpus: enough to catch a
+# different or reordered --vectors file without hashing what can be gigabytes of data.
+_CORPUS_SAMPLE_ROWS = 4096
 
 
 class RunFormatError(ValueError):
@@ -37,6 +46,23 @@ def _faissight_version() -> str:
         return "0.0.0+unknown"
 
 
+def corpus_fingerprint(source: VectorSource) -> str:
+    """A cheap identity for a raw-vector ground-truth corpus.
+
+    Hashes shape/dtype plus up to :data:`_CORPUS_SAMPLE_ROWS` evenly spaced rows, not the
+    whole array: the corpus a sweep's ``--vectors`` points at can be gigabytes, and this
+    only needs to catch "you compared against a different file", not verify it exactly.
+    """
+    h = hashlib.sha1()
+    h.update(f"{source.vectors.shape}:{source.vectors.dtype}".encode())
+    n = len(source)
+    if n:
+        rows = np.linspace(0, n - 1, min(n, _CORPUS_SAMPLE_ROWS)).astype(np.int64)
+        h.update(np.ascontiguousarray(source.vectors[rows], dtype=np.float32).tobytes())
+        h.update(np.ascontiguousarray(source.ids[rows], dtype=np.int64).tobytes())
+    return h.hexdigest()
+
+
 def run_record(
     result: SweepResult,
     li: LoadedIndex,
@@ -46,8 +72,15 @@ def run_record(
     confident: bool = False,
     max_p95_ms: float | None = None,
     label: str | None = None,
+    source: VectorSource | None = None,
 ) -> dict[str, Any]:
-    """A JSON-ready record of a finished sweep (:func:`save_run` writes it)."""
+    """A JSON-ready record of a finished sweep (:func:`save_run` writes it).
+
+    ``source`` is the raw vectors ground truth was computed on (omit when
+    ``result.truth_reconstructed``, where the index itself is the ground-truth identity):
+    it adds a corpus fingerprint so two runs against the same query set but a different
+    ``--vectors`` file aren't mistaken for comparable.
+    """
     choice = result.choose(target_recall, confident=confident, max_p95_ms=max_p95_ms)
     return {
         "format": RUN_FORMAT,
@@ -78,6 +111,7 @@ def run_record(
             "repeats": result.repeats,
             "seed": result.seed,
             "truth_source": "reconstructed" if result.truth_reconstructed else "raw",
+            "ground_truth_fingerprint": corpus_fingerprint(source) if source is not None else None,
         },
         "environment": dict(result.environment),
         "decision": {
@@ -114,17 +148,56 @@ def save_run(record: dict[str, Any], path: str | Path) -> Path:
     return out
 
 
+def _reject_constant(token: str) -> float:
+    # json.loads accepts NaN/Infinity/-Infinity by default (a non-standard extension);
+    # a run record with one would silently break every recall/latency comparison below.
+    raise RunFormatError(f"Not valid JSON: {token} is not allowed in a sweep run.")
+
+
 def load_run(path: str | Path) -> dict[str, Any]:
     """Read and check a run record written by :func:`save_run` (or the Tuner's Save run)."""
     try:
-        data = json.loads(Path(path).read_text())
+        data = json.loads(Path(path).read_text(), parse_constant=_reject_constant)
     except json.JSONDecodeError as e:
         raise RunFormatError(f"{path} is not JSON: {e}") from None
     return check_run(data)
 
 
+def _finite(x: Any) -> float:
+    v = float(x)
+    if not math.isfinite(v):
+        raise ValueError("not a finite number")
+    return v
+
+
+def _fraction(x: Any) -> float:
+    v = _finite(x)
+    if not -1e-9 <= v <= 1 + 1e-9:
+        raise ValueError("outside [0, 1]")
+    return v
+
+
+def _nonneg(x: Any) -> float:
+    v = _finite(x)
+    if v < 0:
+        raise ValueError("negative")
+    return v
+
+
+def _nonempty_str(x: Any) -> str:
+    if not isinstance(x, str) or not x:
+        raise ValueError("must be a non-empty string")
+    return x
+
+
 def check_run(data: Any) -> dict[str, Any]:
-    """Validate the parts of a run record that comparisons rely on; return it."""
+    """Validate a run record: not just its shape, but that its numbers can be trusted.
+
+    Every field :func:`compare_runs` reads for a regression check is required and range
+    checked (finite, recall in ``[0, 1]``, latency non-negative), point values must be
+    unique, and the fingerprints comparisons key off must be present. A file that fails
+    this is never silently compared against or saved over.
+    """
     if not isinstance(data, dict) or data.get("format") != RUN_FORMAT:
         raise RunFormatError("Not a faissight sweep run (expected format faissight.sweep-run).")
     if data.get("version") != RUN_VERSION:
@@ -136,15 +209,29 @@ def check_run(data: Any) -> dict[str, Any]:
         for key in ("index", "queries", "settings", "environment", "decision"):
             if not isinstance(data[key], dict):
                 raise TypeError(key)
+        _nonempty_str(data["index"]["sha1"])
+        _nonempty_str(data["settings"]["param"])
+        int(data["settings"]["k"])
+        _nonempty_str(data["queries"]["sha256"])
+        if not isinstance(data["points"], list) or not data["points"]:
+            raise ValueError("points must be a non-empty list")
+        seen_values: set[int] = set()
         for p in data["points"]:
-            int(p["value"])
-            float(p["recall"])
-            float(p["latency_p95_ms"])
-        for section, key in (("settings", "param"), ("settings", "k"), ("index", "sha1")):
-            if key not in data[section]:
-                raise KeyError(f"{section}.{key}")
+            value = int(p["value"])
+            if value in seen_values:
+                raise ValueError(f"duplicate point value {value}")
+            seen_values.add(value)
+            _fraction(p["recall"])
+            _nonneg(p["latency_p95_ms"])
+            if p.get("latency_mean_ms") is not None:
+                _nonneg(p["latency_mean_ms"])
+            if p.get("probe_coverage") is not None:
+                _fraction(p["probe_coverage"])
+            lo, hi = p.get("recall_ci_low"), p.get("recall_ci_high")
+            if lo is not None and hi is not None and _fraction(lo) > _fraction(hi) + 1e-9:
+                raise ValueError("recall_ci_low > recall_ci_high")
     except (KeyError, TypeError, ValueError) as e:
-        raise RunFormatError(f"Incomplete sweep run: missing or invalid {e}.") from None
+        raise RunFormatError(f"Incomplete or invalid sweep run: {e}.") from None
     return dict(data)
 
 
@@ -195,6 +282,17 @@ class RunComparison:
     def regressed(self) -> bool:
         return bool(self.regressions)
 
+    @property
+    def comparable(self) -> bool:
+        """False when nothing was actually checked: no shared, judgeable settings.
+
+        This is distinct from ``regressed``: a comparison that couldn't check anything
+        (different query sets, no overlapping values, incompatible metrics, ...) must not
+        be mistaken for a clean pass. Callers gating CI should treat this as its own
+        failure, separate from ``regressed``.
+        """
+        return bool(self.points)
+
 
 def compare_runs(
     baseline: dict[str, Any],
@@ -229,6 +327,18 @@ def compare_runs(
         recall_ok = False
     if bs.get("truth_source") != cs.get("truth_source"):
         notes.append("One run's ground truth used decoded vectors, the other raw vectors.")
+        recall_ok = False
+    base_fp, cur_fp = bs.get("ground_truth_fingerprint"), cs.get("ground_truth_fingerprint")
+    if base_fp is not None and cur_fp is not None and base_fp != cur_fp:
+        notes.append(
+            "Different ground-truth corpus (the --vectors file differs): recall isn't comparable."
+        )
+        recall_ok = False
+    if base["index"].get("metric") != cur["index"].get("metric"):
+        notes.append(
+            f"Different metrics ({base['index'].get('metric')} vs {cur['index'].get('metric')}): "
+            "recall isn't comparable."
+        )
         recall_ok = False
     if base["index"]["sha1"] != cur["index"]["sha1"]:
         notes.append("Different index files (sha1 differs): changes reflect the new index.")

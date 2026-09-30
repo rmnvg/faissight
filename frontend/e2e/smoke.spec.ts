@@ -218,14 +218,53 @@ test('tuner: save a run, then compare later sweeps with it', async ({ page }) =>
   await expect(card.getByText('No regressions against this run')).toBeVisible()
   await expect(card.locator('tbody tr')).toHaveCount(2)
 
-  // A baseline whose recall was higher: this sweep regressed.
-  for (const p of run.points) p.recall = p.recall + 0.5
-  await file.setInputFiles({ name: 'better.json', mimeType: 'application/json', buffer: Buffer.from(JSON.stringify(run)) })
+  // A baseline that was much faster (a tiny fixed latency, not this run's real one --
+  // recall on this small dataset is already near-ceiling, leaving no room to regress it):
+  // this sweep regressed on latency at every setting. A near-zero floor makes that
+  // detectable regardless of how fast real search is on this tiny synthetic index.
+  await card.getByLabel('and at least (ms)').fill('0')
+  const slower = JSON.parse(JSON.stringify(run))
+  for (const p of slower.points) p.latency_p95_ms = 0.0001
+  await file.setInputFiles({ name: 'faster-baseline.json', mimeType: 'application/json', buffer: Buffer.from(JSON.stringify(slower)) })
   await expect(card.getByText(/Regressed at 2 of 2 settings/)).toBeVisible()
-  await expect(card.getByText('regressed: recall').first()).toBeVisible()
+  await expect(card.getByText('regressed: p95').first()).toBeVisible()
 
+  // A malformed file must clear that regression verdict, not leave it looking current.
   await file.setInputFiles({ name: 'bad.json', mimeType: 'application/json', buffer: Buffer.from('{"format": "x"}') })
   await expect(card.getByText(/Not a faissight sweep run/)).toBeVisible()
+  await expect(card.getByText(/Regressed at 2 of 2 settings/)).toHaveCount(0)
+  await expect(card.locator('tbody tr')).toHaveCount(0)
+
+  // Changing a threshold without re-running flags the shown result as stale.
+  await file.setInputFiles({ name: 'same2.json', mimeType: 'application/json', buffer: Buffer.from(JSON.stringify(run)) })
+  await expect(card.getByText('No regressions against this run')).toBeVisible()
+  await expect(card.getByText(/thresholds below changed/)).toHaveCount(0)
+  await card.getByLabel('p95 growth allowed (%)').fill('999')
+  await expect(card.getByText(/thresholds below changed/)).toBeVisible()
+  await card.getByRole('button', { name: 'Compare again' }).click()
+  await expect(card.getByText(/thresholds below changed/)).toHaveCount(0)
+})
+
+test('tuner: a saved run round-trips large int64 ids exactly', async ({ page }) => {
+  await page.goto('http://127.0.0.1:8797/#/tuner')
+  await page.getByRole('button', { name: 'Run sweep' }).click()
+  await expect(page.getByText(/Recommended (nprobe|efSearch)/)).toBeVisible({ timeout: 20_000 })
+
+  const downloading = page.waitForEvent('download')
+  await page.getByRole('button', { name: 'Save run' }).click()
+  const saved = await downloading
+  const text = await readFile(await saved.path(), 'utf8')
+  const run = JSON.parse(text)
+  const worstIds = run.points.flatMap((p: { worst_queries: { id: string | number | null }[] }) =>
+    p.worst_queries.map((w) => w.id).filter((id: unknown) => id !== null),
+  )
+  expect(worstIds.length).toBeGreaterThan(0)
+  for (const id of worstIds) {
+    // The large ids in this fixture are all >= 2**53 + 1: JS can only hold those exactly
+    // as strings, so a bare (roundable) number in the saved file would mean precision loss.
+    expect(typeof id).toBe('string')
+    expect(BigInt(id) >= 2n ** 53n + 1n).toBe(true)
+  }
 })
 
 test('compare: side-by-side recall, latency, size and changed neighbours', async ({ page }) => {
