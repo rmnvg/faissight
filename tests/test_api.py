@@ -903,3 +903,25 @@ def test_compare_cancel(synthetic) -> None:
     # Starting it again reruns it.
     rerun = client.post("/api/compare", json={"n_queries": 10}).json()
     assert _wait_compare(client, rerun["job_id"]).json()["status"] == "done"
+
+
+@pytest.mark.parametrize("kind", ["ivf", "hnsw"])
+def test_empty_index_answers_without_server_errors(kind) -> None:
+    d = 8
+    if kind == "ivf":
+        x = np.random.default_rng(0).normal(size=(200, d)).astype(np.float32)
+        index = faiss.IndexIVFFlat(faiss.IndexFlatL2(d), d, 4)
+        index.train(x)
+    else:
+        index = faiss.IndexHNSWFlat(d, 8)
+    client = _client(Session(index, vectors=np.empty((0, d), np.float32), disk_cache=False))
+    assert client.get("/api/info").json()["ntotal"] == 0
+    request = {"query": {"vector": [0.0] * d}, "k": 5, "compare": True, "trace": kind == "ivf"}
+    r = client.post("/api/search", json=request)
+    assert r.status_code == 200, r.text
+    assert r.json()["results"] == []
+    assert r.json()["truth"] == []
+    _assert_error(client.post("/api/sweep", json={}), 400, "EMPTY_INDEX")
+    _assert_error(client.get("/api/pq/error"), 400, "EMPTY_INDEX")
+    if kind == "hnsw":
+        _assert_error(client.post("/api/trace/hnsw", json=request), 400, "EMPTY_INDEX")

@@ -159,6 +159,8 @@ def trace_search(
     """Replay HNSW search for one core-space query and record every step."""
     if k < 1 or ef_search < 1:
         raise ValueError("k and ef_search must be >= 1.")
+    if g.entry_point < 0 or len(vectors) == 0:
+        raise ValueError("The HNSW graph is empty: there is no search to trace.")
     dist = _Distances(vectors, np.asarray(query_core, dtype=np.float32), metric)
     # faiss 1.15 sizes the level-0 candidate queue with efSearch itself, not max(efSearch, k)
     # as older sources suggest; measured: matching it gives 100% overlap at efSearch < k too.

@@ -151,6 +151,10 @@ class GroundTruth:
     def search(self, query: npt.ArrayLike, k: int, exclude_id: int | None = None) -> SearchResult:
         """Exact top-k (user-facing ids), optionally excluding one id."""
         q = _as_query(query, self.d)
+        if len(self.source) == 0:
+            # Nothing stored: no neighbours (faiss.knn would report row -1, which has no id).
+            empty = np.empty(0, dtype=np.int64)
+            return SearchResult(empty, np.empty(0, dtype=np.float32), self.metric, 0.0)
         k_search = min(k + (exclude_id is not None), max(len(self.source), 1))
         t0 = time.perf_counter()
         distances, rows = self._knn(q, k_search)
@@ -171,10 +175,12 @@ class GroundTruth:
         if q.ndim != 2 or q.shape[1] != self.d:
             raise ValueError(f"Queries must have shape (n, {self.d}), got {q.shape}.")
         excl = None if exclude_ids is None else np.asarray(exclude_ids, dtype=np.int64)
+        out = np.full((len(q), k), -1, dtype=np.int64)
+        if len(self.source) == 0 or len(q) == 0:
+            return out
         k_search = min(k + (excl is not None), max(len(self.source), 1))
         _, rows = self._knn(q, k_search)
         ids = np.where(rows >= 0, self.source.ids[np.maximum(rows, 0)], -1)
-        out = np.full((len(q), k), -1, dtype=np.int64)
         for i in range(len(q)):
             row = ids[i]
             if excl is not None:

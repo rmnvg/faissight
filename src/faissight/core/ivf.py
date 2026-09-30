@@ -52,6 +52,8 @@ class Assignments:
     def lookup(self, ids: npt.ArrayLike) -> IntArray:
         """List number for each id, ``-1`` for ids that are not stored."""
         ids = np.asarray(ids, dtype=np.int64)
+        if len(self.ids) == 0:
+            return np.full(ids.shape, -1, dtype=np.int64)
         pos = np.searchsorted(self.ids, ids)
         pos_clipped = np.minimum(pos, len(self.ids) - 1)
         found = (pos < len(self.ids)) & (self.ids[pos_clipped] == ids)

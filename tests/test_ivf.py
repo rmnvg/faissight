@@ -141,3 +141,9 @@ def test_user_facing_ids(wrap) -> None:
     # Search results come back as user ids and must resolve to their list.
     _, found = index.search(x[:5], 1)
     assert (a.lookup(found[:, 0]) >= 0).all()
+
+
+def test_assignments_lookup_on_empty_index() -> None:
+    empty = ivf.Assignments(np.empty(0, dtype=np.int64), np.empty(0, dtype=np.int64))
+    assert empty.lookup([0, 5]).tolist() == [-1, -1]
+    assert empty.lookup(np.empty(0, dtype=np.int64)).shape == (0,)

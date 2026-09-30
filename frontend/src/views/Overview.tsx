@@ -36,6 +36,13 @@ export function Overview({ info }: { info: Info }) {
           basic stats below.
         </Banner>
       )}
+      {info.supported && info.ntotal === 0 && (
+        <Banner tone="warning">
+          <strong>This index is empty.</strong> Searches return no results, and sweeps, comparisons and
+          quantization analysis need stored vectors. Add vectors (<code>index.add</code>) and save the index
+          again.
+        </Banner>
+      )}
       {info.supported && info.ground_truth_source === 'reconstructed' && (
         <Banner tone="warning">
           Ground truth computed on reconstructed vectors; PQ/SQ error is not measured. Pass{' '}

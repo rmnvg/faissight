@@ -26,6 +26,8 @@ All notable changes to faissight are documented here. The format follows
 
 ### Fixed
 
+- Empty indexes no longer crash exact search, IVF traces, HNSW traces or quantization
+  analysis: searches return no results and analyses answer `400 EMPTY_INDEX` with a hint.
 - Reject raw-vector ID sets that disagree with the index instead of reporting false recall.
 - Preserve large int64 IDs across API responses, searches, maps, HNSW traces, links and exports.
 - Reject non-finite vectors/queries and fractional raw-vector IDs at ingestion.

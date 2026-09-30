@@ -173,3 +173,10 @@ def test_trace_errors(hnsw) -> None:
     _, g, x = hnsw
     with pytest.raises(ValueError, match=">= 1"):
         T.trace_search(g, x, np.zeros(D), 0, 16)
+
+
+def test_trace_empty_graph_is_a_clear_error() -> None:
+    li = load_index(faiss.IndexHNSWFlat(4, 8))
+    g = H.extract_graph(li)
+    with pytest.raises(ValueError, match="empty"):
+        T.trace_search(g, np.empty((0, 4), dtype=np.float32), np.zeros(4), 5, 16)

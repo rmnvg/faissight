@@ -97,6 +97,14 @@ def _load_array(value: ArrayInput, name: str) -> np.ndarray[Any, Any]:
     return np.asarray(value)
 
 
+def _empty_index_error(what: str) -> InputError:
+    return InputError(
+        "EMPTY_INDEX",
+        f"The index has no vectors, so there is nothing to {what}.",
+        "Add vectors to the index (index.add) and save it again.",
+    )
+
+
 class DemoLimitError(ValueError):
     """A request exceeds what a public demo allows."""
 
@@ -470,6 +478,8 @@ class Session:
             raise ValueError(f"Cannot analyse: {self.li.unsupported_reason}")
         if self._raw is None:
             raise pq_mod.RawVectorsRequiredError()
+        if self.li.ntotal == 0:
+            raise _empty_index_error("analyse")
         raw = self._raw
 
         def work(progress: Callable[[float, str], None]) -> pq_mod.QuantizationReport:
@@ -510,6 +520,8 @@ class Session:
     ) -> hnsw_trace.HnswTrace:
         if not self.li.kind.is_hnsw:
             raise ValueError("HNSW traces need an HNSW index.")
+        if self.li.ntotal == 0:
+            raise _empty_index_error("trace")
         return hnsw_trace.trace_for_index(
             self.li, self.hnsw_graph, self.hnsw_vectors, vector, k, ef_search
         )
@@ -569,6 +581,8 @@ class Session:
             raise ValueError("k and n_queries must be >= 1.")
         if not 1 <= repeats <= 20 or not 0 <= seed <= 2**32 - 1:
             raise ValueError("repeats must be 1-20 and seed must be 0-4294967295.")
+        if self.li.ntotal == 0:
+            raise _empty_index_error("sweep")
         p, vals = check_values(self.li, param, values)
         if self.demo_limits is not None:
             lim = self.demo_limits
@@ -642,6 +656,8 @@ class Session:
             raise ValueError("k and n_queries must be >= 1.")
         if not 1 <= repeats <= 20 or not 0 <= seed <= 2**32 - 1:
             raise ValueError("repeats must be 1-20 and seed must be 0-4294967295.")
+        if self.li.ntotal == 0:
+            raise _empty_index_error("compare")
         right = self.candidates[candidate].li
         # Reject bad search parameters now rather than inside the background job.
         resolve_search_params(self.li, left_nprobe, left_ef_search)
