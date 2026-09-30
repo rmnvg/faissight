@@ -269,3 +269,52 @@ test('narrow frames hide the sidebar and open it as an overlay', async ({ page }
   await page.setViewportSize({ width: 1280, height: 800 })
   await expect(nav).toBeVisible()
 })
+
+test('tuner: cancel, then restart with identical settings, resumes the sweep', async ({ page }) => {
+  await page.goto('/#/tuner')
+  // Enough work (16 values x 2000 queries x 20 repeats) to cancel while it runs.
+  await page.getByRole('textbox').first().fill(Array.from({ length: 16 }, (_, i) => i + 1).join(', '))
+  await page.getByLabel('queries (sampled)').fill('2000')
+  await page.getByLabel('Timing repeats').fill('20')
+  await page.getByRole('button', { name: 'Run sweep' }).click()
+  await page.getByRole('button', { name: 'Cancel sweep' }).click()
+  await expect(page.getByText('Sweep cancelled.')).toBeVisible({ timeout: 10_000 })
+  const url = page.url()
+
+  // Same settings -> same job id and URL; the cached "cancelled" state must not stick.
+  await page.getByRole('button', { name: 'Run sweep' }).click()
+  await expect(page.getByRole('progressbar')).toBeVisible()
+  await expect(page.getByText('Sweep cancelled.')).toHaveCount(0)
+  expect(page.url()).toBe(url)
+  await page.getByRole('button', { name: 'Cancel sweep' }).click()
+  await expect(page.getByText('Sweep cancelled.')).toBeVisible({ timeout: 10_000 })
+  // "Run again" restarts it the same way.
+  await page.getByRole('button', { name: 'Run again' }).click()
+  await expect(page.getByRole('progressbar')).toBeVisible()
+  await page.getByRole('button', { name: 'Cancel sweep' }).click()
+  await expect(page.getByText('Sweep cancelled.')).toBeVisible({ timeout: 10_000 })
+})
+
+test('tuner: a job the server no longer has can be run again from the link', async ({ page }) => {
+  // e.g. a bookmarked result after the server restarted: the settings live in the URL.
+  await page.goto('/#/tuner?job=000000000000&values=1,2&k=5&n=30&repeats=1&seed=4')
+  await expect(page.getByText('This sweep is no longer on the server')).toBeVisible()
+  await expect(page.getByRole('textbox').first()).toHaveValue('1, 2')
+  await expect(page.getByLabel('Seed')).toHaveValue('4')
+  await page.getByRole('button', { name: 'Run again' }).click()
+  await expect(page.getByText('Recommended nprobe')).toBeVisible({ timeout: 20_000 })
+  await expect(page).toHaveURL(/job=(?!000000000000)\w+&values=1%2C2&k=5&n=30&repeats=1&seed=4/)
+  await expect(page.getByText('no longer on the server')).toHaveCount(0)
+})
+
+test('compare: an expired comparison offers "Run again" with its settings', async ({ page }) => {
+  await page.goto('/#/compare?job=000000000000&candidate=0&k=10&n=40&repeats=1&seed=0&left=4&right=2')
+  await expect(page.getByText('This comparison is no longer on the server')).toBeVisible()
+  await expect(page.getByLabel('nprobe (main)')).toHaveValue('4')
+  await expect(page.getByLabel('nprobe (other)')).toHaveValue('2')
+  await page.getByRole('button', { name: 'Run again' }).click()
+  await expect(page.getByText('ivf_pq.index vs ivf_flat.index:')).toBeVisible({ timeout: 20_000 })
+  const side = page.locator('section', { hasText: 'Side by side' })
+  await expect(side.getByRole('cell', { name: 'nprobe 4', exact: true })).toBeVisible()
+  await expect(side.getByRole('cell', { name: 'nprobe 2', exact: true })).toBeVisible()
+})

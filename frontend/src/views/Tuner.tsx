@@ -1,4 +1,3 @@
-import { useMutation } from '@tanstack/react-query'
 import { useState } from 'react'
 import {
   Area,
@@ -17,11 +16,13 @@ import {
   ZAxis,
 } from 'recharts'
 import { api } from '../api/client'
-import { useSweep } from '../api/hooks'
-import type { Info, SweepParam, SweepPoint, SweepResult } from '../api/types'
+import { useJob } from '../api/jobs'
+import type { Info, SweepParam, SweepPoint, SweepRequest, SweepResult } from '../api/types'
 import { Field, NumberInput } from '../components/form'
-import { Banner, Card, EmptyState, Progress, Segmented, StatTile } from '../components/ui'
+import { JobStatus } from '../components/JobStatus'
+import { Banner, Card, EmptyState, Segmented, StatTile } from '../components/ui'
 import { downloadCSV, downloadJSON } from '../lib/exportData'
+import { runSettingsFromParams, sweepParams, sweepValuesText } from '../lib/jobParams'
 import { navigate } from '../lib/route'
 import {
   codeSnippet,
@@ -39,22 +40,25 @@ const AXIS = { fill: 'var(--muted)', fontSize: 11 }
 
 export default function Tuner({ info, params }: { info: Info; params: URLSearchParams }) {
   const defaults = info.sweep
-  const [valuesText, setValuesText] = useState(defaults?.values.join(', ') ?? '')
-  const [k, setK] = useState(10)
-  const [nQueries, setNQueries] = useState(200)
-  const [repeats, setRepeats] = useState(3)
-  const [seed, setSeed] = useState(0)
+  // The form starts from the URL, so a shared or reloaded link can be run again as-is.
+  const [initial] = useState(() => runSettingsFromParams(params))
+  const [valuesText, setValuesText] = useState(sweepValuesText(params) ?? defaults?.values.join(', ') ?? '')
+  const [k, setK] = useState(initial.k)
+  const [nQueries, setNQueries] = useState(initial.nQueries)
+  const [repeats, setRepeats] = useState(initial.repeats)
+  const [seed, setSeed] = useState(initial.seed)
   const [target, setTarget] = useState(0.95)
   const [formError, setFormError] = useState<string | null>(null)
   const jobId = params.get('job')
 
-  const start = useMutation({
-    mutationFn: api.startSweep,
-    onSuccess: (job) => navigate('tuner', { job: job.job_id }),
+  const { job, poll, start, cancel, missing } = useJob({
+    kind: 'sweep',
+    jobId,
+    start: api.startSweep,
+    fetch: api.sweep,
+    cancel: api.cancelSweep,
+    onStarted: (j, req: SweepRequest) => navigate('tuner', sweepParams(j.job_id, req)),
   })
-  const sweep = useSweep(jobId)
-  const job = sweep.data
-  const cancel = useMutation({ mutationFn: api.cancelSweep, onSuccess: () => sweep.refetch() })
 
   if (!defaults) {
     return (
@@ -156,18 +160,14 @@ export default function Tuner({ info, params }: { info: Info; params: URLSearchP
           </EmptyState>
         </Card>
       )}
-      {job?.status === 'running' && (
-        <Card>
-          <div className="flex justify-center py-6">
-            <Progress value={job.progress} message={job.message} />
-          </div>
-        </Card>
-      )}
-      {job?.status === 'failed' && <Banner tone="error">Sweep failed: {job.error}</Banner>}
-      {job?.status === 'cancelled' && <Banner>Sweep cancelled.</Banner>}
-      {start.isError && <Banner tone="error">{start.error.message}</Banner>}
-      {cancel.isError && <Banner tone="error">{cancel.error.message}</Banner>}
-      {sweep.isError && <Banner tone="error">{sweep.error.message}</Banner>}
+      <JobStatus
+        noun="Sweep"
+        job={job}
+        missing={missing}
+        errors={[start.error, cancel.error, missing ? null : poll.error]}
+        onRunAgain={run}
+        running={start.isPending}
+      />
 
       {result && <p className="text-xs text-muted">
         {result.repeats} timing repeats · seed {result.seed} · query set {result.query_sha256.slice(0, 12)}.

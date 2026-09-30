@@ -26,6 +26,10 @@ All notable changes to faissight are documented here. The format follows
 
 ### Fixed
 
+- Restarting a cancelled or failed sweep or comparison with the same settings now shows the
+  new run; before, the reused job id kept the old status on screen and polling never resumed.
+- Sweep and comparison links carry their settings, and a job the server no longer has (expired
+  or server restarted) says so and offers "Run again" with those settings.
 - Empty indexes no longer crash exact search, IVF traces, HNSW traces or quantization
   analysis: searches return no results and analyses answer `400 EMPTY_INDEX` with a hint.
 - Reject raw-vector ID sets that disagree with the index instead of reporting false recall.
