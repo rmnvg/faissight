@@ -19,9 +19,11 @@ import { api } from '../api/client'
 import { useJob } from '../api/jobs'
 import type { Info, SweepParam, SweepPoint, SweepRequest, SweepResult } from '../api/types'
 import { Field, NumberInput } from '../components/form'
+import { EvaluationChecklist } from '../components/EvaluationChecklist'
 import { JobStatus } from '../components/JobStatus'
 import { Banner, Card, EmptyState, Segmented, StatTile } from '../components/ui'
 import { downloadCSV, downloadJSON } from '../lib/exportData'
+import { evaluationChecklist, halfWidth } from '../lib/evaluation'
 import { runSettingsFromParams, sweepParams, sweepValuesText } from '../lib/jobParams'
 import { navigate } from '../lib/route'
 import {
@@ -153,12 +155,15 @@ export default function Tuner({ info, params }: { info: Info; params: URLSearchP
       </Card>
 
       {!jobId && (
-        <Card>
-          <EmptyState title="Run a sweep to begin">
-            The defaults cover {defaults.values[0]}–{defaults.values[defaults.values.length - 1]}.
-            Recall is measured against exact ground truth.
-          </EmptyState>
-        </Card>
+        <>
+          <Card>
+            <EmptyState title="Run a sweep to begin">
+              The defaults cover {defaults.values[0]}–{defaults.values[defaults.values.length - 1]}.
+              Recall is measured against exact ground truth.
+            </EmptyState>
+          </Card>
+          <EvaluationChecklist items={evaluationChecklist(info)} />
+        </>
       )}
       <JobStatus
         noun="Sweep"
@@ -174,7 +179,7 @@ export default function Tuner({ info, params }: { info: Info; params: URLSearchP
         JSON exports include measurement settings and environment versions.
       </p>}
       {result && (
-        <Results result={result} target={target} setTarget={setTarget} hasRefine={info.has_refine} />
+        <Results result={result} target={target} setTarget={setTarget} info={info} />
       )}
     </div>
   )
@@ -184,13 +189,14 @@ function Results({
   result,
   target,
   setTarget,
-  hasRefine,
+  info,
 }: {
   result: SweepResult
   target: number
   setTarget: (t: number) => void
-  hasRefine: boolean
+  info: Info
 }) {
+  const hasRefine = info.has_refine
   const [confident, setConfident] = useState(false)
   const [focusValue, setFocusValue] = useState<number | null>(null)
   const pts = result.points
@@ -300,6 +306,15 @@ function Results({
           value measuring faster is usually timing noise; rerun with more timing repeats before preferring it.
         </Banner>
       )}
+
+      <EvaluationChecklist
+        items={evaluationChecklist(info, {
+          queryOrigin: result.query_origin,
+          nQueries: result.n_queries,
+          // Precision at the setting you'd pick (or the best one tried).
+          halfWidth: halfWidth((rec ?? best).recall_ci_low, (rec ?? best).recall_ci_high),
+        })}
+      />
 
       <div className="grid gap-4 lg:grid-cols-3">
         <Card

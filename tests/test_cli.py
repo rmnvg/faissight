@@ -341,6 +341,7 @@ def test_sweep_table(synthetic) -> None:
     assert "nprobe sweep" in result.output
     assert "Recommended nprobe=" in result.output
     assert "reconstructed" not in result.output
+    assert "held-out queries with --queries" in result.output
 
 
 def test_sweep_json(synthetic) -> None:

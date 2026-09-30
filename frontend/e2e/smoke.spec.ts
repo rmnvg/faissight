@@ -124,6 +124,10 @@ test('tuner: sweep and get a recommendation', async ({ page }) => {
   await page.getByRole('button', { name: 'Run sweep' }).click()
   await expect(page.getByText('Recommended nprobe')).toBeVisible({ timeout: 20_000 })
   await expect(page.getByText('faiss.SearchParametersIVF(nprobe=')).toBeVisible()
+  // The e2e server samples stored vectors as queries: the checklist says so.
+  const trust = page.locator('section', { hasText: 'How far to trust this' })
+  await expect(trust.getByText('Queries are sampled stored vectors')).toBeVisible()
+  await expect(trust.getByText('Recall is not relevance')).toBeVisible()
 })
 
 test('tuner: per-query recall and worst queries lead to the explorer', async ({ page }) => {

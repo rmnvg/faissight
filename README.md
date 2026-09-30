@@ -135,6 +135,12 @@ mean) and its lowest-recall queries. The recommendation is the *smallest* value 
 target; when a larger value happens to measure faster, it is reported separately as the
 fastest measured setting, since that gap is usually timing noise.
 
+Sampled stored vectors make convenient queries, but they are not your users' queries. Pass
+held-out queries with `--queries` before trusting a recommendation; the Tuner and Compare
+views show a "How far to trust this" checklist. Recall is agreement with exact search on
+the same embeddings. It is not answer quality: if the exact neighbours are poor answers, the
+embedding model or chunking is at fault, not the index.
+
 ```bash
 faissight compare exact.index compressed.index --vectors vectors.npy \
   --queries queries.npy --right-nprobe 16 --repeats 5 --seed 42 --json > comparison.json

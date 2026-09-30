@@ -445,6 +445,11 @@ def _print_sweep(result: SweepResult, rec: SweepPoint | None, target: float) -> 
             "[yellow]Ground truth computed on reconstructed vectors; PQ/SQ error is not "
             "measured.[/] Pass --vectors for exact ground truth."
         )
+    if result.query_origin == "sampled":
+        console.print(
+            "Queries are stored vectors, which can behave differently from real queries. "
+            "Pass held-out queries with --queries for a production-representative result."
+        )
     table = Table()
     table.add_column(result.param.value, justify="right")
     table.add_column(f"recall@{result.k}", justify="right")

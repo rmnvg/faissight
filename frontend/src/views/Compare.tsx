@@ -3,11 +3,13 @@ import { api } from '../api/client'
 import { useJob } from '../api/jobs'
 import type { CompareCandidate, CompareMeasurement, CompareRequest, CompareResult, Info, SweepParam } from '../api/types'
 import { Field, NumberInput } from '../components/form'
+import { EvaluationChecklist } from '../components/EvaluationChecklist'
 import { JobStatus } from '../components/JobStatus'
 import { Banner, Card, EmptyState, StatTile } from '../components/ui'
 import { fmtBytes, idList, recallIntervalsOverlap, relative, signedRecall, verdict } from '../lib/compare'
 import { downloadCSV, downloadJSON } from '../lib/exportData'
 import { fmtNum } from '../lib/format'
+import { evaluationChecklist, halfWidth } from '../lib/evaluation'
 import { compareParams, runSettingsFromParams } from '../lib/jobParams'
 import { intParam, navigate } from '../lib/route'
 
@@ -192,7 +194,20 @@ export default function Compare({ info, params }: { info: Info; params: URLSearc
         running={start.isPending}
       />
 
+      {!jobId && <EvaluationChecklist items={evaluationChecklist(info)} />}
       {result && <Results result={result} leftParam={leftParam} />}
+      {result && (
+        <EvaluationChecklist
+          items={evaluationChecklist(info, {
+            queryOrigin: result.query_origin,
+            nQueries: result.n_queries,
+            halfWidth: Math.max(
+              halfWidth(result.left.recall_ci_low, result.left.recall_ci_high) ?? 0,
+              halfWidth(result.right.recall_ci_low, result.right.recall_ci_high) ?? 0,
+            ),
+          })}
+        />
+      )}
     </div>
   )
 }

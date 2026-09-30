@@ -8,6 +8,10 @@ All notable changes to faissight are documented here. The format follows
 
 ### Added
 
+- "How far to trust this" checklist in the Tuner and Compare views: whether queries are
+  held-out or sampled stored vectors, whether ground truth is exact, how precisely recall is
+  measured (and how many queries would tighten it), and that ANN recall is not relevance.
+  `faissight sweep` says when its queries are sampled stored vectors.
 - `--mmap` for `serve`, `sweep` and `compare` (and `launch(..., mmap=True)`) memory-maps the
   raw vectors file. `/api/info.memory` and the Overview report the vectors' size, whether
   they are mapped (and why not, if not), and what decoding the index would cost.
