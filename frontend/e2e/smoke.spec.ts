@@ -253,3 +253,19 @@ test('overview: a failed list-size request shows an error with a working retry',
   await expect(page.getByText('List size distribution')).toBeVisible()
   await expect(page.getByText('Could not read the inverted lists.')).toHaveCount(0)
 })
+
+test('narrow frames hide the sidebar and open it as an overlay', async ({ page }) => {
+  await page.setViewportSize({ width: 390, height: 800 })
+  await page.goto('/')
+  await expect(page.getByRole('heading', { name: 'Overview' })).toBeVisible()
+  const nav = page.getByRole('navigation', { name: 'Views' })
+  await expect(nav).toBeHidden()
+  await page.getByRole('button', { name: '☰ Menu' }).click()
+  await expect(nav).toBeVisible()
+  await nav.getByRole('button', { name: /Tuner/ }).click()
+  await expect(page.getByRole('heading', { name: 'Tuner' })).toBeVisible()
+  await expect(nav).toBeHidden()
+  // Widening the frame brings the sidebar back.
+  await page.setViewportSize({ width: 1280, height: 800 })
+  await expect(nav).toBeVisible()
+})
