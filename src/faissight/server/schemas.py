@@ -360,6 +360,7 @@ class SuggestionOut(BaseModel):
         "RECALL_PLATEAU",
         "FAILING_QUERIES",
         "LIST_IMBALANCE",
+        "LATENCY_BUDGET",
     ]
     title: str
     detail: str
@@ -376,6 +377,7 @@ class SuggestionOut(BaseModel):
 class SweepAdviceResponse(BaseModel):
     target_recall: float
     confident: bool
+    max_p95_ms: float | None = None
     suggestions: list[SuggestionOut]
     """Most important first; empty when nothing needs changing."""
 

@@ -112,6 +112,9 @@ def sweep_advice(
     confident: Annotated[
         bool, Query(description="Judge by the 95% lower bound of recall, not the mean.")
     ] = False,
+    max_p95_ms: Annotated[
+        float | None, Query(gt=0, description="p95 latency budget per query (ms).")
+    ] = None,
 ) -> S.SweepAdviceResponse:
     """Suggested next steps for a finished sweep, with the measurements behind each."""
     job = session.get_sweep_job(job_id)
@@ -123,10 +126,13 @@ def sweep_advice(
         raise ApiError(
             409, "NOT_READY", "This sweep hasn't finished.", "Poll GET /api/sweep/{job_id} first."
         )
-    suggestions = session.sweep_advice(job.result, target, confident=confident)
+    suggestions = session.sweep_advice(
+        job.result, target, confident=confident, max_p95_ms=max_p95_ms
+    )
     return S.SweepAdviceResponse(
         target_recall=target,
         confident=confident,
+        max_p95_ms=max_p95_ms,
         suggestions=[
             S.SuggestionOut.model_validate({**asdict(s), "kind": s.kind.value}) for s in suggestions
         ],

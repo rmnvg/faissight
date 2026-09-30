@@ -501,6 +501,17 @@ def test_sweep_probe_coverage_and_advice() -> None:
     assert max(first["sweep_values"]) <= NLIST
     assert all(set(e) == {"label", "value"} for e in first["evidence"])
 
+    tight = ivf_client.get(
+        f"/api/sweep/{job_id}/advice", params={"target": 0.0, "max_p95_ms": 1e-9}
+    ).json()
+    assert tight["max_p95_ms"] == 1e-9
+    assert tight["suggestions"][0]["kind"] == "LATENCY_BUDGET"
+    _assert_error(
+        ivf_client.get(f"/api/sweep/{job_id}/advice", params={"max_p95_ms": 0}),
+        422,
+        "VALIDATION_ERROR",
+    )
+
     easy = ivf_client.get(f"/api/sweep/{job_id}/advice", params={"target": 0.0}).json()
     assert all(s["kind"] == "LIST_IMBALANCE" for s in easy["suggestions"])
     _assert_error(

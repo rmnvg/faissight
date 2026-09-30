@@ -27,14 +27,15 @@ import { evaluationChecklist, halfWidth } from '../lib/evaluation'
 import { runSettingsFromParams, sweepParams, sweepValuesText } from '../lib/jobParams'
 import { navigate } from '../lib/route'
 import {
+  choose,
   codeSnippet,
   fastest,
   fractionBelow,
   meets,
   parseValues,
   prefersLogAxis,
-  recommend,
   speedup,
+  withinBudget,
 } from '../lib/tuner'
 import { RecallBreakdown, WorstQueries } from './TunerDiagnostics'
 import { NextSteps } from './TunerNextSteps'
@@ -219,10 +220,12 @@ function Results({
 }) {
   const hasRefine = info.has_refine
   const [confident, setConfident] = useState(false)
+  const [maxP95, setMaxP95] = useState<number | null>(null)
   const [focusValue, setFocusValue] = useState<number | null>(null)
   const pts = result.points
-  const rec = recommend(pts, target, confident)
-  const quickest = fastest(pts, target, confident)
+  const choice = choose(pts, target, confident, maxP95)
+  const rec = choice.point
+  const quickest = fastest(pts, target, confident, maxP95)
   const fast = rec ? speedup(pts, rec) : null
   const best = pts.reduce((a, b) => (b.recall > a.recall ? b : a))
   const pareto = new Set(result.pareto_values)
@@ -269,6 +272,23 @@ function Results({
             {result.query_origin === 'sampled' && ' (each excludes itself)'}
           </span>
         </label>
+        <label className="mt-3 flex flex-wrap items-center gap-3 text-sm text-ink-2">
+          p95 latency budget
+          <input
+            type="number"
+            min={0}
+            step="any"
+            placeholder="none"
+            aria-label="p95 latency budget (ms)"
+            value={maxP95 ?? ''}
+            onChange={(e) => {
+              const v = e.target.value === '' ? null : Number(e.target.value)
+              setMaxP95(v !== null && Number.isFinite(v) && v > 0 ? v : null)
+            }}
+            className="tabular w-28 rounded-lg border border-line bg-page px-2 py-1 text-sm text-ink outline-none focus:border-series-1"
+          />
+          <span className="text-xs text-muted">ms per query, single-threaded like the measurements; empty = no budget</span>
+        </label>
         <div className="mt-3 flex flex-wrap items-center gap-3 text-sm text-ink-2">
           Meets the target when
           <Segmented
@@ -294,8 +314,10 @@ function Results({
           tone={rec ? 'good' : 'bad'}
           caption={
             rec
-              ? `smallest value ${confident ? 'confidently ' : ''}meeting the target`
-              : `best was ${best.recall.toFixed(3)} at ${best.value}; see next steps`
+              ? `smallest value ${confident ? 'confidently ' : ''}meeting the target${maxP95 !== null ? ' within budget' : ''}`
+              : choice.status === 'latency' && choice.byRecall
+                ? `recall needs ${choice.byRecall.value}, p95 ${choice.byRecall.latency_p95_ms.toPrecision(3)} ms: over budget`
+                : `best was ${best.recall.toFixed(3)} at ${best.value}; see next steps`
           }
         />
         <StatTile
@@ -335,6 +357,7 @@ function Results({
         k={result.k}
         target={target}
         confident={confident}
+        maxP95={maxP95}
         targetMet={rec !== null}
         onSweep={onSweep}
         sweeping={sweeping}
@@ -436,6 +459,15 @@ function Results({
                   wrapperStyle={{ fontSize: 11, color: 'var(--ink-2)' }}
                 />
                 {rec && <ReferenceLine x={rec.value} stroke="var(--good)" />}
+                {maxP95 !== null && (
+                  <ReferenceLine
+                    y={maxP95}
+                    stroke="var(--ink-2)"
+                    strokeDasharray="4 3"
+                    ifOverflow="extendDomain"
+                    label={{ value: `p95 budget ${maxP95} ms`, position: 'insideTopRight', ...AXIS }}
+                  />
+                )}
                 <Line
                   name="mean"
                   dataKey="latency_mean_ms"
@@ -571,6 +603,7 @@ function Results({
                     ...result,
                     target_recall: target,
                     recommendation_rule: confident ? 'ci_low' : 'mean',
+                    max_p95_ms: maxP95,
                     recommended: rec?.value ?? null,
                     fastest_meeting_target: quickest?.value ?? null,
                   })}
@@ -636,6 +669,7 @@ function Results({
                         </span>
                       )}
                       {meets(p, target, confident) ? 'meets target' : 'below target'}
+                      {!withinBudget(p, maxP95) && ' · over budget'}
                       {pareto.has(p.value) && ' · Pareto-optimal'}
                       {quickest?.value === p.value && quickest.value !== rec?.value && ' · fastest measured'}
                     </td>

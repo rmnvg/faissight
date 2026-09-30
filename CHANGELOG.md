@@ -8,6 +8,10 @@ All notable changes to faissight are documented here. The format follows
 
 ### Added
 
+- p95 latency budgets: `faissight sweep --max-p95-ms`, a budget field in the Tuner and
+  `max_p95_ms` on `/api/sweep/{job_id}/advice`. The recommendation must meet recall and the
+  budget. When no setting does both, the result names the setting recall needs and the best
+  recall within the budget (`SweepResult.choose`), and exit code 2 gates CI on both.
 - Held-out evaluation queries (`--queries`) can be explained like stored ones: "Explain" in
   the Tuner's worst queries and Compare's changed queries opens the Query Explorer by the
   query's row (`#/query?row=N`), and the explorer has an "Evaluation query" mode. The API

@@ -709,7 +709,12 @@ class Session:
         return self.jobs.get(key) if key is not None else None
 
     def sweep_advice(
-        self, result: SweepResult, target_recall: float, *, confident: bool = False
+        self,
+        result: SweepResult,
+        target_recall: float,
+        *,
+        confident: bool = False,
+        max_p95_ms: float | None = None,
     ) -> list[Suggestion]:
         """Suggested next steps for a finished sweep of this index."""
         li = self.li
@@ -725,6 +730,7 @@ class Session:
             list_stats=self.list_stats() if li.kind.is_ivf else None,
             max_value=max_value,
             can_compare=bool(self.candidates),
+            max_p95_ms=max_p95_ms,
         )
 
     # --- index comparison -----------------------------------------------------------------

@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import type { Suggestion, SweepPoint } from '../api/types'
 import {
+  choose,
   codeSnippet,
   fastest,
   fractionBelow,
@@ -129,5 +130,28 @@ describe('suggestionLink', () => {
     expect(suggestionLink({ ...base, view: 'overview' }, 'nprobe', 10)?.view).toBe('overview')
     expect(suggestionLink({ ...base, view: 'quantization' }, 'nprobe', 10)?.view).toBe('quantization')
     expect(suggestionLink({ ...base, view: 'compare' }, 'nprobe', 10)?.view).toBe('compare')
+  })
+})
+
+describe('choose', () => {
+  // p95 is 1.2x the mean latency in these points.
+  it('keeps the recommendation within the p95 budget', () => {
+    expect(choose(points, 0.95, false, 0.3).point?.value).toBe(4)
+    const c = choose(points, 0.95, false, 0.2)
+    expect(c.status).toBe('latency')
+    expect(c.point).toBeNull()
+    expect(c.byRecall?.value).toBe(4)
+    expect(c.bestInBudget?.value).toBe(2)
+    expect(recommend(points, 0.95, false, 0.2)).toBeNull()
+    expect(fastest(points, 0.95, false, 0.2)).toBeNull()
+  })
+  it('says when the recall target itself is out of reach', () => {
+    const c = choose(points, 1.01, false, 10)
+    expect(c.status).toBe('recall')
+    expect(c.bestInBudget?.value).toBe(8)
+    expect(choose(points, 0.95, false, 0.01).bestInBudget).toBeNull()
+  })
+  it('matches recommend without a budget', () => {
+    expect(choose(points, 0.95).point).toBe(recommend(points, 0.95))
   })
 })

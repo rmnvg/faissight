@@ -264,6 +264,7 @@ export type SuggestionKind =
   | 'RECALL_PLATEAU'
   | 'FAILING_QUERIES'
   | 'LIST_IMBALANCE'
+  | 'LATENCY_BUDGET'
 
 /** A suggested next step from a sweep, with the measurements behind it. */
 export interface Suggestion {
@@ -283,6 +284,7 @@ export interface Suggestion {
 export interface SweepAdvice {
   target_recall: number
   confident: boolean
+  max_p95_ms: number | null
   /** Most important first; empty when nothing needs changing. */
   suggestions: Suggestion[]
 }

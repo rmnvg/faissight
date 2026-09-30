@@ -24,7 +24,7 @@ from faissight.core._faiss import FaissNotInstalledError
 from faissight.core.advice import Suggestion
 from faissight.core.loader import IndexLoadError, load_index
 from faissight.core.projection import DEFAULT_MAX_POINTS
-from faissight.core.sweep import SweepPoint, SweepResult
+from faissight.core.sweep import Choice, SweepResult
 from faissight.core.types import LoadedIndex
 from faissight.server.app import create_app
 from faissight.session import InputError, Session
@@ -358,6 +358,13 @@ def sweep(
         int, typer.Option(min=0, max=2**32 - 1, help="Query sampling and timing-order seed.")
     ] = 0,
     target: Annotated[float, typer.Option(help="Target recall for the recommendation.")] = 0.95,
+    max_p95_ms: Annotated[
+        float | None,
+        typer.Option(
+            min=0.0,
+            help="Also require p95 latency (single-threaded, per query) within this budget.",
+        ),
+    ] = None,
     as_json: Annotated[bool, typer.Option("--json", help="Print JSON instead of a table.")] = False,
     mmap: Annotated[
         bool,
@@ -370,7 +377,8 @@ def sweep(
 ) -> None:
     """Measure recall@k and latency across nprobe/efSearch values.
 
-    Exits with code 2 if no value reaches --target, so it can gate CI.
+    Exits with code 2 if no value reaches --target (within --max-p95-ms, if given), so it
+    can gate CI.
     """
     parsed_values = _values_option(values)
     if param is not None and param not in ("nprobe", "efSearch"):
@@ -404,9 +412,10 @@ def sweep(
         raise _fail(f"Sweep failed: {job.error}")
     result = job.result
     assert result is not None
-    rec = result.recommend(target)
-    fastest = result.fastest(target)
-    suggestions = session.sweep_advice(result, target)
+    choice = result.choose(target, max_p95_ms=max_p95_ms)
+    rec = choice.point
+    fastest = result.fastest(target, max_p95_ms=max_p95_ms)
+    suggestions = session.sweep_advice(result, target, max_p95_ms=max_p95_ms)
 
     if as_json:
         typer.echo(
@@ -418,6 +427,8 @@ def sweep(
                     "query_origin": result.query_origin,
                     "truth_source": "reconstructed" if result.truth_reconstructed else "raw",
                     "target": target,
+                    "max_p95_ms": max_p95_ms,
+                    "status": choice.status,
                     "repeats": result.repeats,
                     "seed": result.seed,
                     "query_sha256": result.query_sha256,
@@ -432,13 +443,14 @@ def sweep(
             )
         )
     else:
-        _print_sweep(result, rec, target)
+        _print_sweep(result, choice, target)
         _print_suggestions(suggestions)
     if rec is None:
         raise typer.Exit(code=2)
 
 
-def _print_sweep(result: SweepResult, rec: SweepPoint | None, target: float) -> None:
+def _print_sweep(result: SweepResult, choice: Choice, target: float) -> None:
+    rec, budget = choice.point, choice.max_p95_ms
     origin = "given" if result.query_origin == "given" else "sampled stored-vector"
     console.print(
         f"[bold]{result.param.value} sweep[/] · recall@{result.k} over {result.n_queries} "
@@ -471,6 +483,8 @@ def _print_sweep(result: SweepResult, rec: SweepPoint | None, target: float) -> 
             if rec is not None and p.value == rec.value
             else ("meets target" if p.recall >= target else "")
         )
+        if budget is not None and p.latency_p95_ms > budget:
+            mark = f"{mark}, over budget" if mark else "over budget"
         below = p.fraction_below(target)
         coverage = [f"{p.probe_coverage:.3f}" if p.probe_coverage is not None else ""]
         table.add_row(
@@ -488,11 +502,20 @@ def _print_sweep(result: SweepResult, rec: SweepPoint | None, target: float) -> 
             mark,
         )
     console.print(table)
+    name = result.param.value
+    if choice.status == "latency":
+        over = choice.by_recall
+        assert over is not None
+        console.print(
+            f"[red]No value reached recall {target:g} within p95 {budget:g} ms[/]: it first "
+            f"comes at {name}={over.value} with p95 {over.latency_p95_ms:.3f} ms."
+        )
+        return
     if rec is None:
         best = max(result.points, key=lambda p: p.recall)
         console.print(
             f"[red]No value reached recall {target:g}[/] (best {best.recall:.3f} at "
-            f"{result.param.value}={best.value})."
+            f"{name}={best.value})."
         )
         return
     slowest = max(result.points, key=lambda p: p.value)
@@ -506,7 +529,7 @@ def _print_sweep(result: SweepResult, rec: SweepPoint | None, target: float) -> 
         f"Recommended [bold]{result.param.value}={rec.value}[/] (smallest value meeting the "
         f"target): recall {rec.recall:.3f} at {rec.latency_mean_ms:.3f} ms/query{faster}."
     )
-    fastest = result.fastest(target)
+    fastest = result.fastest(target, max_p95_ms=budget)
     if fastest is not None and fastest.value != rec.value:
         console.print(
             f"Fastest measured: {result.param.value}={fastest.value} at "

@@ -80,10 +80,10 @@ export function useMetadata(id: UserId | null, enabled: boolean) {
 }
 
 /** Suggested next steps for a finished sweep at a target recall (kept while the target moves). */
-export function useSweepAdvice(jobId: string, target: number, confident: boolean) {
+export function useSweepAdvice(jobId: string, target: number, confident: boolean, maxP95: number | null) {
   return useQuery({
-    queryKey: ['sweep-advice', jobId, target, confident],
-    queryFn: ({ signal }) => api.sweepAdvice(jobId, target, confident, signal),
+    queryKey: ['sweep-advice', jobId, target, confident, maxP95],
+    queryFn: ({ signal }) => api.sweepAdvice(jobId, target, confident, maxP95, signal),
     staleTime: Infinity,
     retry: false,
     placeholderData: (prev) => prev,

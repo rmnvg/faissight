@@ -182,6 +182,22 @@ test('tuner: a held-out evaluation query opens in the explorer by its row', asyn
   await expect(truth).toHaveCount(10)
 })
 
+test('tuner: a p95 latency budget the target can\'t fit in is explained', async ({ page }) => {
+  await page.goto('/#/tuner')
+  await page.getByRole('button', { name: 'Run sweep' }).click()
+  await expect(page.getByText('Recommended nprobe')).toBeVisible({ timeout: 20_000 })
+  const budget = page.getByLabel('p95 latency budget (ms)')
+  await budget.fill('0.000001')
+  await expect(page.getByText('Not reached')).toBeVisible()
+  await expect(page.getByText(/recall needs \d+, p95 .* ms: over budget/)).toBeVisible()
+  const steps = page.locator('section', { hasText: 'Suggested next steps' })
+  await expect(steps.getByText('No setting meets both the recall target and the latency budget')).toBeVisible()
+  await expect(page.getByText('over budget', { exact: false }).first()).toBeVisible()
+  await budget.fill('')
+  await expect(page.getByText('Not reached')).toHaveCount(0)
+  await expect(steps.getByText('No setting meets both')).toHaveCount(0)
+})
+
 test('compare: side-by-side recall, latency, size and changed neighbours', async ({ page }) => {
   await page.goto('/')
   await page.getByRole('button', { name: /Compare/ }).click()

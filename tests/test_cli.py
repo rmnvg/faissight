@@ -416,6 +416,20 @@ def test_sweep_unreachable_target_exits_2(synthetic) -> None:
     assert "Suggested next steps" in result.output
 
 
+def test_sweep_latency_budget_gates_ci(synthetic) -> None:
+    args = ["sweep", str(synthetic["ivf_flat"]), "--vectors", str(synthetic["vectors"])]
+    args += ["--values", "1,16", "--n-queries", "20", "--target", "0.5"]
+    ok = runner.invoke(app, [*args, "--max-p95-ms", "1000", "--json"])
+    assert ok.exit_code == 0, ok.output
+    body = json.loads(ok.stdout)
+    assert (body["status"], body["max_p95_ms"]) == ("ok", 1000.0)
+    # No real search is this fast: the target is reachable, but not within the budget.
+    tight = runner.invoke(app, [*args, "--max-p95-ms", "0.000001"])
+    assert tight.exit_code == 2
+    assert "within p95 1e-06 ms" in tight.output
+    assert "latency budget" in tight.output  # the suggestion
+
+
 @pytest.mark.parametrize(
     ("args", "message"),
     [

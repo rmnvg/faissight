@@ -14,6 +14,7 @@ export function NextSteps({
   k,
   target,
   confident,
+  maxP95,
   targetMet,
   onSweep,
   sweeping,
@@ -23,17 +24,21 @@ export function NextSteps({
   k: number
   target: number
   confident: boolean
+  /** p95 latency budget (ms), if any. */
+  maxP95: number | null
   targetMet: boolean
   /** Start a follow-up sweep of the same parameter with these values. */
   onSweep: (values: number[]) => void
   sweeping: boolean
 }) {
-  const advice = useSweepAdvice(jobId, target, confident)
+  const advice = useSweepAdvice(jobId, target, confident, maxP95)
   const suggestions = advice.data?.suggestions
   return (
     <Card
       title="Suggested next steps"
-      subtitle={`From this sweep's measurements, for a target recall@${k} of ${target.toFixed(2)}`}
+      subtitle={`From this sweep's measurements, for a target recall@${k} of ${target.toFixed(2)}${
+        maxP95 !== null ? ` within p95 ${maxP95} ms` : ''
+      }`}
     >
       {advice.isPending ? (
         <Spinner label="Reading the measurements" />

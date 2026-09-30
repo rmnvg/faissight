@@ -237,24 +237,46 @@ class SweepResult:
         hit = np.nonzero(self.coverage_curve >= coverage - 1e-9)[0]
         return int(hit[0]) if len(hit) else None
 
-    def recommend(self, target_recall: float, *, confident: bool = False) -> SweepPoint | None:
+    def recommend(
+        self, target_recall: float, *, confident: bool = False, max_p95_ms: float | None = None
+    ) -> SweepPoint | None:
         """Smallest parameter value whose mean recall meets ``target_recall``.
 
         Picks by parameter value, not measured latency, because latency is noisy and
         cost grows with the parameter. With ``confident``, the lower end of the recall
-        interval must meet the target instead of the mean.
+        interval must meet the target instead of the mean. With ``max_p95_ms``, the
+        setting's p95 latency must also be within that budget (see :meth:`choose`).
         """
-        ok = [p for p in self.points if _meets(p, target_recall, confident)]
+        ok = [p for p in self.points if _meets(p, target_recall, confident, max_p95_ms)]
         return min(ok, key=lambda p: p.value) if ok else None
 
-    def fastest(self, target_recall: float, *, confident: bool = False) -> SweepPoint | None:
+    def fastest(
+        self, target_recall: float, *, confident: bool = False, max_p95_ms: float | None = None
+    ) -> SweepPoint | None:
         """The measured-fastest setting (mean latency) that meets ``target_recall``.
 
         Often the same as :meth:`recommend`; when it isn't, the gap is usually timing noise
         unless it is large or repeats across runs.
         """
-        ok = [p for p in self.points if _meets(p, target_recall, confident)]
+        ok = [p for p in self.points if _meets(p, target_recall, confident, max_p95_ms)]
         return min(ok, key=lambda p: (p.latency_mean_ms, p.value)) if ok else None
+
+    def choose(
+        self, target_recall: float, *, confident: bool = False, max_p95_ms: float | None = None
+    ) -> Choice:
+        """The recommendation under a recall target and optional p95 budget, and if there is
+        none, which constraint no measured setting could satisfy."""
+        rec = self.recommend(target_recall, confident=confident, max_p95_ms=max_p95_ms)
+        by_recall = self.recommend(target_recall, confident=confident)
+        in_budget = [p for p in self.points if _within(p, max_p95_ms)]
+        best_in_budget = max(in_budget, key=lambda p: (p.recall, -p.value), default=None)
+        if rec is not None:
+            status: ChoiceStatus = "ok"
+        elif by_recall is None:
+            status = "recall"
+        else:
+            status = "latency"
+        return Choice(status, rec, by_recall, best_in_budget, max_p95_ms)
 
     def pareto(self) -> list[SweepPoint]:
         """Points not beaten on both recall and mean latency, fastest first."""
@@ -270,9 +292,34 @@ class SweepResult:
         return sorted(front, key=lambda p: p.latency_mean_ms)
 
 
-def _meets(p: SweepPoint, target_recall: float, confident: bool) -> bool:
+def _within(p: SweepPoint, max_p95_ms: float | None) -> bool:
+    return max_p95_ms is None or p.latency_p95_ms <= max_p95_ms
+
+
+def _meets(
+    p: SweepPoint, target_recall: float, confident: bool, max_p95_ms: float | None = None
+) -> bool:
     recall = p.recall_ci_low if confident and p.recall_ci_low is not None else p.recall
-    return recall >= target_recall - 1e-9
+    return recall >= target_recall - 1e-9 and _within(p, max_p95_ms)
+
+
+ChoiceStatus = Literal["ok", "recall", "latency"]
+
+
+@dataclass(frozen=True)
+class Choice:
+    """What :meth:`SweepResult.choose` found."""
+
+    status: ChoiceStatus
+    """``ok``; ``recall``: no setting reaches the target; ``latency``: some do, but none
+    within the p95 budget."""
+    point: SweepPoint | None
+    """The recommendation (meets every constraint)."""
+    by_recall: SweepPoint | None
+    """The recommendation ignoring the latency budget."""
+    best_in_budget: SweepPoint | None
+    """The highest-recall setting within the budget (every setting without one)."""
+    max_p95_ms: float | None
 
 
 # Queries per untimed batch (exact ground truth, warm-up, probe ranks). Cancellation is

@@ -422,3 +422,37 @@ def test_sweep_warm_up_and_probe_ranks_check_in_between_batches(ivf_setup, monke
         "nprobe=1"
     ] * 3
     assert all("warming up" in m for m in seen[4:])
+
+
+# --- latency budget ------------------------------------------------------------------------
+
+
+def _timed(value: int, recall: float, p95: float) -> W.SweepPoint:
+    return W.SweepPoint(value, recall, p95 / 2, p95)
+
+
+def test_choose_under_a_latency_budget() -> None:
+    r = W.SweepResult(
+        W.SweepParam.NPROBE,
+        10,
+        100,
+        "sampled",
+        False,
+        [_timed(1, 0.80, 1.0), _timed(4, 0.93, 3.0), _timed(8, 0.96, 6.0), _timed(16, 0.99, 12.0)],
+    )
+    ok = r.choose(0.95, max_p95_ms=6.0)
+    assert (ok.status, ok.point.value, ok.best_in_budget.value) == ("ok", 8, 8)
+    assert r.recommend(0.95, max_p95_ms=6.0).value == 8
+    # Recall needs nprobe 8, whose p95 is over 5 ms: say so, and what the budget allows.
+    slow = r.choose(0.95, max_p95_ms=5.0)
+    assert (slow.status, slow.point) == ("latency", None)
+    assert (slow.by_recall.value, slow.best_in_budget.value) == (8, 4)
+    assert r.recommend(0.95, max_p95_ms=5.0) is None
+    assert r.fastest(0.95, max_p95_ms=5.0) is None
+    none_fit = r.choose(0.95, max_p95_ms=0.5)
+    assert (none_fit.status, none_fit.best_in_budget) == ("latency", None)
+    unreachable = r.choose(0.999, max_p95_ms=100.0)
+    assert (unreachable.status, unreachable.by_recall) == ("recall", None)
+    assert unreachable.best_in_budget.value == 16
+    # Without a budget, choose() is recommend().
+    assert r.choose(0.95).point == r.recommend(0.95)

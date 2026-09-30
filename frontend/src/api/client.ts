@@ -154,9 +154,16 @@ export const api = {
     (await request<SweepJob>(`sweep/${encodeURIComponent(jobId)}`, { method: 'DELETE' })).body,
   sweep: (jobId: string, signal?: AbortSignal) =>
     get<SweepJob>(`sweep/${encodeURIComponent(jobId)}`, signal),
-  sweepAdvice: (jobId: string, target: number, confident: boolean, signal?: AbortSignal) =>
+  sweepAdvice: (
+    jobId: string,
+    target: number,
+    confident: boolean,
+    maxP95: number | null,
+    signal?: AbortSignal,
+  ) =>
     get<SweepAdvice>(
-      `sweep/${encodeURIComponent(jobId)}/advice?target=${target}&confident=${confident}`,
+      `sweep/${encodeURIComponent(jobId)}/advice?target=${target}&confident=${confident}` +
+        (maxP95 !== null ? `&max_p95_ms=${maxP95}` : ''),
       signal,
     ),
   /** Starts (or reuses) an index comparison; the job may still be running (HTTP 202). */

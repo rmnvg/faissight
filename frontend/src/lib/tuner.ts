@@ -2,28 +2,64 @@ import type { Suggestion, SweepParam, SweepPoint } from '../api/types'
 import type { View } from './route'
 
 /** Whether a point meets the target: its mean recall, or with `confident` the lower end of
- * its 95% interval (mirrors core.sweep). */
-export function meets(p: SweepPoint, target: number, confident = false): boolean {
+ * its 95% interval, and with `maxP95` a p95 latency within that budget (mirrors core.sweep). */
+export function meets(p: SweepPoint, target: number, confident = false, maxP95: number | null = null): boolean {
   const recall = confident && p.recall_ci_low !== null ? p.recall_ci_low : p.recall
-  return recall >= target - 1e-9
+  return recall >= target - 1e-9 && withinBudget(p, maxP95)
+}
+
+export function withinBudget(p: SweepPoint, maxP95: number | null): boolean {
+  return maxP95 === null || p.latency_p95_ms <= maxP95
 }
 
 /** Smallest parameter value that meets the target (mirrors core.sweep). */
-export function recommend(points: SweepPoint[], target: number, confident = false): SweepPoint | null {
-  const ok = points.filter((p) => meets(p, target, confident))
+export function recommend(
+  points: SweepPoint[],
+  target: number,
+  confident = false,
+  maxP95: number | null = null,
+): SweepPoint | null {
+  const ok = points.filter((p) => meets(p, target, confident, maxP95))
   if (ok.length === 0) return null
   return ok.reduce((a, b) => (b.value < a.value ? b : a))
 }
 
 /** Measured-fastest point (mean latency) that meets the target (mirrors core.sweep). */
-export function fastest(points: SweepPoint[], target: number, confident = false): SweepPoint | null {
-  const ok = points.filter((p) => meets(p, target, confident))
+export function fastest(
+  points: SweepPoint[],
+  target: number,
+  confident = false,
+  maxP95: number | null = null,
+): SweepPoint | null {
+  const ok = points.filter((p) => meets(p, target, confident, maxP95))
   if (ok.length === 0) return null
   return ok.reduce((a, b) =>
     b.latency_mean_ms < a.latency_mean_ms || (b.latency_mean_ms === a.latency_mean_ms && b.value < a.value)
       ? b
       : a,
   )
+}
+
+export interface Choice {
+  /** 'recall': no setting reaches the target; 'latency': some do, none within the budget. */
+  status: 'ok' | 'recall' | 'latency'
+  point: SweepPoint | null
+  /** The recommendation ignoring the budget. */
+  byRecall: SweepPoint | null
+  /** Highest-recall setting within the budget (any setting without one). */
+  bestInBudget: SweepPoint | null
+}
+
+/** The recommendation under a recall target and optional p95 budget (mirrors core.sweep). */
+export function choose(points: SweepPoint[], target: number, confident = false, maxP95: number | null = null): Choice {
+  const point = recommend(points, target, confident, maxP95)
+  const byRecall = recommend(points, target, confident)
+  const inBudget = points.filter((p) => withinBudget(p, maxP95))
+  const bestInBudget = inBudget.length
+    ? inBudget.reduce((a, b) => (b.recall > a.recall || (b.recall === a.recall && b.value < a.value) ? b : a))
+    : null
+  const status = point ? 'ok' : byRecall ? 'latency' : 'recall'
+  return { status, point, byRecall, bestInBudget }
 }
 
 /** Share of queries whose own recall is below the target; null without a distribution. */

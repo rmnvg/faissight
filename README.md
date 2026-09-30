@@ -112,14 +112,14 @@ faissight serve INDEX [--vectors v.npy] [--ids ids.npy] [--meta chunks.jsonl]
                       [--compare other.index ...] [--mmap]
 faissight info INDEX                          # kind, wrappers, parameters
 faissight sweep INDEX --vectors v.npy [--param nprobe] [--target 0.95]
-                      [--repeats 3] [--seed 0] [--json]
+                      [--max-p95-ms 10] [--repeats 3] [--seed 0] [--json]
 faissight compare LEFT RIGHT --vectors v.npy [--queries q.npy] [--ids ids.npy]
                       [--left-nprobe 4] [--right-ef-search 64] [--json]
 faissight demo [--index ivf_pq|ivf_flat|hnsw]
 ```
 
-`faissight sweep` exits with code 2 when no value reaches `--target`, so it can guard recall
-in CI.
+`faissight sweep` exits with code 2 when no value reaches `--target` (within the p95 budget
+of `--max-p95-ms`, if given), so it can guard recall and latency in CI.
 
 ## Reproducible tuning and index comparison
 
@@ -133,7 +133,10 @@ Each setting also reports an approximate 95% interval for mean recall, the exact
 recall distribution (so "how many queries fall below the target" is known, not just the
 mean) and its lowest-recall queries. The recommendation is the *smallest* value meeting the
 target; when a larger value happens to measure faster, it is reported separately as the
-fastest measured setting, since that gap is usually timing noise.
+fastest measured setting, since that gap is usually timing noise. A p95 latency budget
+(`--max-p95-ms`, or the Tuner's budget field) adds a second constraint. When the target is
+reachable but not within the budget, the result says so, with the setting recall needs and
+the best recall the budget allows, instead of reporting "not reached".
 
 ### Suggested next steps
 
