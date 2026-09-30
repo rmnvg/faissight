@@ -146,6 +146,27 @@ test('tuner: per-query recall and worst queries lead to the explorer', async ({ 
   await expect(page.getByText('Recall@10', { exact: true })).toBeVisible()
 })
 
+test('tuner: suggested next steps explain a miss and run the follow-up sweep', async ({ page }) => {
+  await page.goto('/#/tuner')
+  await page.getByRole('textbox').first().fill('1')
+  await page.getByRole('button', { name: 'Run sweep' }).click()
+  await expect(page.getByText('Recommended nprobe')).toBeVisible({ timeout: 20_000 })
+  await page.getByRole('slider').fill('1')
+  const steps = page.locator('section', { hasText: 'Suggested next steps' })
+  // IVF-Flat codes are exact, so every miss at nprobe 1 is an unprobed list.
+  await expect(steps.getByText(/Probe more lists: try nprobe up to \d+/)).toBeVisible()
+  await expect(steps.getByText(/In probed lists at nprobe 1/)).toBeVisible()
+  await expect(steps.getByText('Compression is limiting recall')).toHaveCount(0)
+  await expect(page.getByRole('columnheader', { name: 'In probed lists' }).first()).toBeVisible()
+
+  await steps.getByRole('button', { name: /^Sweep nprobe 1, / }).click()
+  await expect(page).toHaveURL(/values=1%2C2/, { timeout: 10_000 })
+  await expect(page.getByRole('textbox').first()).toHaveValue(/^1, 2/)
+  await expect(page.locator('section', { hasText: 'All measurements' }).locator('tbody tr')).not.toHaveCount(1, {
+    timeout: 20_000,
+  })
+})
+
 test('compare: side-by-side recall, latency, size and changed neighbours', async ({ page }) => {
   await page.goto('/')
   await page.getByRole('button', { name: /Compare/ }).click()

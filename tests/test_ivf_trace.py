@@ -198,3 +198,54 @@ def test_pca_full_probe_misses_are_transform(synthetic) -> None:
             counts[reason] += c
     assert counts[MissReason.TRANSFORM] > 0
     assert counts[MissReason.CELL_NOT_PROBED] == counts[MissReason.RANKED_OUT] == 0
+
+
+# --- probe ranks and coverage over a query set ---------------------------------------------
+
+
+def test_hand_built_truth_probe_ranks() -> None:
+    index, _, q = _hand_built()
+    li = load_index(index)
+    assign = ivf.assignments(li)
+    # Neighbours p0 (cell 1), p1 (cell 0); -1 padding; 99 is not stored.
+    ranks = ivf.truth_probe_ranks(li, q[None], np.array([[0, 1, -1, 99]]), assign)
+    np.testing.assert_array_equal(ranks, [[1, 0, -1, 3]])
+
+
+@pytest.mark.parametrize("name", ["ivf_flat", "ivf_pq", "pca_ivf_flat", "ivf_flat_ip"])
+def test_truth_probe_ranks_match_trace(synthetic, name, monkeypatch) -> None:
+    li = load_index(synthetic[name])
+    src = V.from_arrays(li, np.load(synthetic["vectors"]))
+    gt = S.GroundTruth(src, li.metric)
+    assign = ivf.assignments(li)
+    queries = np.load(synthetic["queries"])[:12]
+    truth = gt.search_batch(queries, 10)
+    # Several chunks: the result must not depend on how queries are batched.
+    monkeypatch.setattr(ivf, "_PROBE_ORDER_CELLS", NLIST * 5)
+    ranks = ivf.truth_probe_ranks(li, queries, truth, assign)
+    for i, qv in enumerate(queries):
+        report = S.explain_query(
+            li, S.resolve_query(li, vector=qv), 10, nprobe=1, ground_truth=gt, assignments=assign
+        )
+        assert report.ivf_trace is not None
+        by_id = {n.id: n.probe_rank for n in report.ivf_trace.neighbours}
+        assert [by_id[int(t)] for t in truth[i]] == ranks[i].tolist()
+
+
+def test_truth_probe_ranks_shape_check(synthetic) -> None:
+    li = load_index(synthetic["ivf_flat"])
+    with pytest.raises(ValueError, match="truth must have shape"):
+        ivf.truth_probe_ranks(li, np.zeros((2, D), np.float32), np.zeros(3), ivf.assignments(li))
+
+
+def test_probe_coverage_curve() -> None:
+    # Query 0: neighbours at ranks 0 and 2. Query 1: rank 1 plus padding. Query 2: no truth.
+    ranks = np.array([[0, 2], [1, -1], [-1, -1]])
+    curve = ivf.probe_coverage(ranks, nlist=4)
+    expected = [1 / 3, 1 / 3 + 1 / 6, 1 / 3 + 1 / 6 + 1 / 3, 1.0, 1.0]
+    np.testing.assert_allclose(curve, expected)
+    np.testing.assert_allclose(ivf.query_probe_coverage(ranks, 2), [0.5, 1.0, 1.0])
+    # Unstored neighbours (rank nlist) are never covered.
+    assert ivf.probe_coverage(np.array([[0, 4]]), nlist=4)[-1] == pytest.approx(0.5)
+    with pytest.raises(ValueError, match="ranks must have shape"):
+        ivf.probe_coverage(np.empty((0, 2), np.int64), nlist=4)

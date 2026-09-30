@@ -59,7 +59,7 @@ report.recall, report.ivf_trace.min_nprobe_for_all
 | View | What it shows |
 |---|---|
 | **Query explorer** | Search by text, stored id or vector. Compares with exact ground truth and gives a reason for every missed neighbour: *cell not probed*, *quantization*, *transform* (PCA/OPQ), or *ranked out*, plus the smallest nprobe that finds them all. Shareable URLs, CSV/JSON export. |
-| **Tuner** | Recall@k and latency across nprobe or efSearch, the cheapest value for your target recall (optionally with 95% confidence), per-query recall and the worst queries (one click to explain each), and a copy-paste snippet to apply it. |
+| **Tuner** | Recall@k and latency across nprobe or efSearch, the cheapest value for your target recall (optionally with 95% confidence), per-query recall and the worst queries (one click to explain each), suggested next steps backed by the measurements, and a copy-paste snippet to apply it. |
 | **Compare** | Two indexes over the same vectors (say IVF-Flat vs IVF-PQ vs HNSW) on identical queries: recall with intervals, mean/p95 latency, serialized size, and which queries' neighbours changed. Start with `--compare OTHER.index`. |
 | **HNSW graph** | The layers of an HNSW graph and an animated, step-by-step replay of the search, showing which true neighbours were never reached. |
 | **Quantization** | How far PQ/SQ codes are from your raw vectors, the compression ratio, and how much they distort distances between near neighbours (the part that decides ranking). |
@@ -134,6 +134,23 @@ recall distribution (so "how many queries fall below the target" is known, not j
 mean) and its lowest-recall queries. The recommendation is the *smallest* value meeting the
 target; when a larger value happens to measure faster, it is reported separately as the
 fastest measured setting, since that gap is usually timing noise.
+
+### Suggested next steps
+
+The Tuner, `faissight sweep` and `GET /api/sweep/{job_id}/advice?target=0.95` turn a sweep
+into next steps, each with the measurements behind it. For IVF sweeps, every setting also
+reports the share of true neighbours in the probed lists. That share caps recall, so the gap
+between them tells the two failure modes apart:
+
+- **Neighbours in lists that weren't probed**: raise nprobe. The suggestion names the
+  nprobe at which the target share of neighbours is within reach and offers that sweep.
+- **Neighbours in probed lists but ranked out**: more probing won't help. PQ/SQ codes, a
+  PCA transform, or (for IVF-Flat) vectors that differ from what was indexed are named as
+  the cause, with a fix such as re-ranking with exact distances.
+
+HNSW sweeps suggest larger efSearch values while recall still rises fast enough to reach the
+target, and a denser graph when it has levelled off. At the recommended setting, a tail of
+queries finding fewer than half their neighbours, and uneven IVF lists, are flagged too.
 
 Sampled stored vectors make convenient queries, but they are not your users' queries. Pass
 held-out queries with `--queries` before trusting a recommendation; the Tuner and Compare

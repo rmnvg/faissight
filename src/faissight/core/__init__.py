@@ -21,6 +21,7 @@ FAISS is imported lazily, so importing this package works without FAISS installe
 """
 
 from faissight.core._faiss import FaissNotInstalledError
+from faissight.core.advice import Evidence, Suggestion, SuggestionKind, advise
 from faissight.core.comparison import ComparisonResult, changed_queries, compare_indexes
 from faissight.core.embed import Embedder, EmbedderUnavailableError
 from faissight.core.ivf import (
@@ -83,6 +84,7 @@ __all__ = [
     "ComparisonResult",
     "Embedder",
     "EmbedderUnavailableError",
+    "Evidence",
     "FaissNotInstalledError",
     "GroundTruth",
     "IndexKind",
@@ -111,6 +113,8 @@ __all__ = [
     "QuerySet",
     "ResolvedQuery",
     "SearchResult",
+    "Suggestion",
+    "SuggestionKind",
     "SweepParam",
     "SweepPoint",
     "SweepResult",
@@ -118,6 +122,7 @@ __all__ = [
     "VectorMismatchError",
     "VectorSource",
     "WorstQuery",
+    "advise",
     "assignments",
     "centroids",
     "changed_queries",

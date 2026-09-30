@@ -1,6 +1,15 @@
 import { describe, expect, it } from 'vitest'
-import type { SweepPoint } from '../api/types'
-import { codeSnippet, fastest, fractionBelow, parseValues, recommend, speedup, prefersLogAxis } from './tuner'
+import type { Suggestion, SweepPoint } from '../api/types'
+import {
+  codeSnippet,
+  fastest,
+  fractionBelow,
+  parseValues,
+  prefersLogAxis,
+  recommend,
+  speedup,
+  suggestionLink,
+} from './tuner'
 
 const pt = (value: number, recall: number, latency: number, ciLow: number | null = null): SweepPoint => ({
   value,
@@ -11,6 +20,7 @@ const pt = (value: number, recall: number, latency: number, ciLow: number | null
   recall_ci_high: ciLow === null ? null : Math.min(1, 2 * recall - ciLow),
   recall_distribution: [],
   worst_queries: [],
+  probe_coverage: null,
 })
 const points = [pt(1, 0.65, 0.1), pt(2, 0.88, 0.15), pt(4, 0.99, 0.2), pt(8, 1, 0.4), pt(16, 1, 0.8)]
 
@@ -87,5 +97,37 @@ describe('fractionBelow', () => {
     expect(fractionBelow(p, 0.9)).toBe(0.25)
     expect(fractionBelow(p, 0.95)).toBe(0.75)
     expect(fractionBelow(pt(1, 0.8, 0.1), 0.9)).toBeNull()
+  })
+})
+
+describe('suggestionLink', () => {
+  const base: Suggestion = {
+    kind: 'FAILING_QUERIES',
+    title: '',
+    detail: '',
+    evidence: [],
+    sweep_values: null,
+    view: null,
+    query_id: null,
+    at_value: 8,
+  }
+  it('opens a query at the measured setting, keeping large ids exact', () => {
+    const link = suggestionLink({ ...base, view: 'query', query_id: '9007199254740993' }, 'nprobe', 10)
+    expect(link?.view).toBe('query')
+    expect(link?.params).toEqual({ id: '9007199254740993', k: 10, nprobe: 8 })
+    expect(suggestionLink({ ...base, view: 'query', query_id: 3 }, 'efSearch', 5)?.params).toEqual({
+      id: '3',
+      k: 5,
+      ef: 8,
+    })
+  })
+  it('has no link without a view or a query id', () => {
+    expect(suggestionLink(base, 'nprobe', 10)).toBeNull()
+    expect(suggestionLink({ ...base, view: 'query' }, 'nprobe', 10)).toBeNull()
+  })
+  it('maps the other views', () => {
+    expect(suggestionLink({ ...base, view: 'overview' }, 'nprobe', 10)?.view).toBe('overview')
+    expect(suggestionLink({ ...base, view: 'quantization' }, 'nprobe', 10)?.view).toBe('quantization')
+    expect(suggestionLink({ ...base, view: 'compare' }, 'nprobe', 10)?.view).toBe('compare')
   })
 })

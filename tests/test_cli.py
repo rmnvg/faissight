@@ -373,9 +373,17 @@ def test_sweep_json(synthetic) -> None:
         "recall_ci_high",
         "recall_distribution",
         "worst_queries",
+        "probe_coverage",
     }
-    assert set(body["points"][0]["worst_queries"][0]) == {"query_no", "id", "recall"}
+    assert set(body["points"][0]["worst_queries"][0]) == {
+        "query_no",
+        "id",
+        "recall",
+        "probe_coverage",
+    }
+    assert body["points"][0]["recall"] <= body["points"][0]["probe_coverage"] + 1e-9
     assert "fastest_meeting_target" in body
+    assert isinstance(body["suggestions"], list)
 
 
 def test_sweep_given_queries(synthetic) -> None:
@@ -404,6 +412,8 @@ def test_sweep_unreachable_target_exits_2(synthetic) -> None:
     )
     assert result.exit_code == 2
     assert "No value reached recall 0.999" in result.output
+    assert "in probed lists" in result.output
+    assert "Suggested next steps" in result.output
 
 
 @pytest.mark.parametrize(

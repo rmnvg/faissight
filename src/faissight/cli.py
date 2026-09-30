@@ -21,6 +21,7 @@ from rich.table import Table
 
 from faissight import __version__
 from faissight.core._faiss import FaissNotInstalledError
+from faissight.core.advice import Suggestion
 from faissight.core.loader import IndexLoadError, load_index
 from faissight.core.projection import DEFAULT_MAX_POINTS
 from faissight.core.sweep import SweepPoint, SweepResult
@@ -405,6 +406,7 @@ def sweep(
     assert result is not None
     rec = result.recommend(target)
     fastest = result.fastest(target)
+    suggestions = session.sweep_advice(result, target)
 
     if as_json:
         typer.echo(
@@ -424,12 +426,14 @@ def sweep(
                     "recommended": rec.value if rec else None,
                     "fastest_meeting_target": fastest.value if fastest else None,
                     "points": [asdict(p) for p in result.points],
+                    "suggestions": [{**asdict(s), "kind": s.kind.value} for s in suggestions],
                 },
                 indent=2,
             )
         )
     else:
         _print_sweep(result, rec, target)
+        _print_suggestions(suggestions)
     if rec is None:
         raise typer.Exit(code=2)
 
@@ -455,6 +459,9 @@ def _print_sweep(result: SweepResult, rec: SweepPoint | None, target: float) -> 
     table.add_column(f"recall@{result.k}", justify="right")
     table.add_column("95% interval", justify="right")
     table.add_column(f"queries < {target:g}", justify="right")
+    has_coverage = result.coverage_curve is not None
+    if has_coverage:
+        table.add_column("in probed lists", justify="right")
     table.add_column("mean ms", justify="right")
     table.add_column("p95 ms", justify="right")
     table.add_column("")
@@ -465,6 +472,7 @@ def _print_sweep(result: SweepResult, rec: SweepPoint | None, target: float) -> 
             else ("meets target" if p.recall >= target else "")
         )
         below = p.fraction_below(target)
+        coverage = [f"{p.probe_coverage:.3f}" if p.probe_coverage is not None else ""]
         table.add_row(
             str(p.value),
             f"{p.recall:.3f}",
@@ -474,6 +482,7 @@ def _print_sweep(result: SweepResult, rec: SweepPoint | None, target: float) -> 
                 else ""
             ),
             f"{below:.0%}" if below is not None else "",
+            *(coverage if has_coverage else []),
             f"{p.latency_mean_ms:.3f}",
             f"{p.latency_p95_ms:.3f}",
             mark,
@@ -483,7 +492,7 @@ def _print_sweep(result: SweepResult, rec: SweepPoint | None, target: float) -> 
         best = max(result.points, key=lambda p: p.recall)
         console.print(
             f"[red]No value reached recall {target:g}[/] (best {best.recall:.3f} at "
-            f"{result.param.value}={best.value}). Try larger values."
+            f"{result.param.value}={best.value})."
         )
         return
     slowest = max(result.points, key=lambda p: p.value)
@@ -511,6 +520,19 @@ def _print_sweep(result: SweepResult, rec: SweepPoint | None, target: float) -> 
             f"Worst query there: {who} with recall {worst.recall:.2f}; "
             f"{rec.fraction_below(target) or 0:.0%} of queries are below the target."
         )
+
+
+def _print_suggestions(suggestions: list[Suggestion]) -> None:
+    if not suggestions:
+        return
+    console.print("\n[bold]Suggested next steps[/]")
+    for i, s in enumerate(suggestions, 1):
+        console.print(f"{i}. [bold]{escape(s.title)}[/]")
+        console.print(f"   {escape(s.detail)}")
+        for e in s.evidence:
+            console.print(f"   [dim]{escape(e.label)}:[/] {escape(e.value)}")
+        if s.sweep_values:
+            console.print(f"   [dim]Next sweep:[/] --values {','.join(map(str, s.sweep_values))}")
 
 
 @app.command()

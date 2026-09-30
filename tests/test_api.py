@@ -444,6 +444,58 @@ def test_sweep_errors(ivf_client, payload, status, code) -> None:
 
 def test_sweep_unknown_job(ivf_client) -> None:
     _assert_error(ivf_client.get("/api/sweep/nope"), 404, "NOT_FOUND")
+    _assert_error(ivf_client.get("/api/sweep/nope/advice"), 404, "NOT_FOUND")
+
+
+def test_sweep_probe_coverage_and_advice() -> None:
+    # Unclustered data, so neighbours spread over many lists and nprobe matters.
+    x = np.random.default_rng(0).standard_normal((2000, 16)).astype(np.float32)
+    index = faiss.IndexIVFFlat(faiss.IndexFlatL2(16), 16, NLIST)
+    index.train(x)
+    index.add(x)
+    ivf_client = _client(Session(index, vectors=x, disk_cache=False))
+    r = ivf_client.post("/api/sweep", json={"values": [1, 2], "k": 10, "n_queries": 30})
+    job_id = r.json()["job_id"]
+    res = _wait_sweep(ivf_client, job_id).json()["result"]
+    for p in res["points"]:
+        assert p["recall"] <= p["probe_coverage"] + 1e-9
+        assert all(w["probe_coverage"] is not None for w in p["worst_queries"])
+
+    advice = ivf_client.get(f"/api/sweep/{job_id}/advice", params={"target": 0.999}).json()
+    assert (advice["target_recall"], advice["confident"]) == (0.999, False)
+    first = advice["suggestions"][0]
+    assert first["kind"] == "PROBE_MORE"
+    assert first["sweep_values"][0] == 2
+    assert max(first["sweep_values"]) <= NLIST
+    assert all(set(e) == {"label", "value"} for e in first["evidence"])
+
+    easy = ivf_client.get(f"/api/sweep/{job_id}/advice", params={"target": 0.0}).json()
+    assert all(s["kind"] == "LIST_IMBALANCE" for s in easy["suggestions"])
+    _assert_error(
+        ivf_client.get(f"/api/sweep/{job_id}/advice", params={"target": 2}),
+        422,
+        "VALIDATION_ERROR",
+    )
+
+
+def test_sweep_advice_hnsw(hnsw_client) -> None:
+    r = hnsw_client.post("/api/sweep", json={"values": [16], "n_queries": 20})
+    job_id = r.json()["job_id"]
+    _wait_sweep(hnsw_client, job_id)
+    body = hnsw_client.get(
+        f"/api/sweep/{job_id}/advice", params={"target": 1.0, "confident": True}
+    ).json()
+    assert body["confident"] is True
+    kinds = [s["kind"] for s in body["suggestions"]]
+    assert kinds in (["SEARCH_WIDER"], [])  # [] only if efSearch 16 already hit recall 1.0
+
+
+def test_sweep_advice_needs_a_finished_sweep(ivf_client, monkeypatch) -> None:
+    from faissight.core.jobs import Job
+
+    session = ivf_client.app.state.session
+    monkeypatch.setattr(session, "get_sweep_job", lambda job_id: Job(key="running"))
+    _assert_error(ivf_client.get("/api/sweep/abc/advice"), 409, "NOT_READY")
 
 
 def test_sweep_flat_index(synthetic) -> None:

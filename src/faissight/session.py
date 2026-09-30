@@ -20,6 +20,7 @@ from faissight.core import comparison as comparison_mod
 from faissight.core import hnsw as hnsw_mod
 from faissight.core import hnsw_trace, ivf
 from faissight.core import pq as pq_mod
+from faissight.core.advice import Suggestion, advise
 from faissight.core.embed import (
     Embedder,
     EmbedderUnavailableError,
@@ -674,6 +675,7 @@ class Session:
                 progress=progress,
                 repeats=repeats,
                 seed=seed,
+                assignments=self.assignments if p is SweepParam.NPROBE else None,
             )
 
         # Starting a sweep is explicit, so a failed or cancelled run with the same settings reruns.
@@ -690,6 +692,25 @@ class Session:
         with self._lock:
             key = self._lazy.get("sweep_ids", {}).get(job_id)
         return self.jobs.get(key) if key is not None else None
+
+    def sweep_advice(
+        self, result: SweepResult, target_recall: float, *, confident: bool = False
+    ) -> list[Suggestion]:
+        """Suggested next steps for a finished sweep of this index."""
+        li = self.li
+        if result.param is SweepParam.NPROBE:
+            max_value: int | None = int(li.ivf.nlist)
+        else:
+            max_value = self.demo_limits.max_ef_search if self.demo_limits is not None else None
+        return advise(
+            result,
+            li,
+            target_recall,
+            confident=confident,
+            list_stats=self.list_stats() if li.kind.is_ivf else None,
+            max_value=max_value,
+            can_compare=bool(self.candidates),
+        )
 
     # --- index comparison -----------------------------------------------------------------
 

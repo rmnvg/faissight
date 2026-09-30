@@ -211,6 +211,8 @@ export interface WorstQuery {
   /** The query's own stored id (sampled queries); null for given queries. */
   id: UserId | null
   recall: number
+  /** IVF: share of its true neighbours in the probed lists (caps its recall). */
+  probe_coverage: number | null
 }
 
 export interface SweepPoint {
@@ -225,6 +227,8 @@ export interface SweepPoint {
   recall_distribution: [number, number][]
   /** Lowest-recall queries, worst first. */
   worst_queries: WorstQuery[]
+  /** IVF: mean share of true neighbours in probed lists, the most recall probing allows. */
+  probe_coverage: number | null
 }
 
 export interface SweepResult {
@@ -249,6 +253,36 @@ export interface SweepJob {
   message: string
   error: string | null
   result: SweepResult | null
+}
+
+export type SuggestionKind =
+  | 'PROBE_MORE'
+  | 'RANKING_LIMIT'
+  | 'SEARCH_WIDER'
+  | 'RECALL_PLATEAU'
+  | 'FAILING_QUERIES'
+  | 'LIST_IMBALANCE'
+
+/** A suggested next step from a sweep, with the measurements behind it. */
+export interface Suggestion {
+  kind: SuggestionKind
+  title: string
+  detail: string
+  evidence: { label: string; value: string }[]
+  /** Values for a follow-up sweep of the same parameter. */
+  sweep_values: number[] | null
+  /** A view that shows more ('query' together with `query_id`). */
+  view: 'overview' | 'quantization' | 'compare' | 'query' | null
+  query_id: UserId | null
+  /** The parameter value the evidence was measured at. */
+  at_value: number | null
+}
+
+export interface SweepAdvice {
+  target_recall: number
+  confident: boolean
+  /** Most important first; empty when nothing needs changing. */
+  suggestions: Suggestion[]
 }
 
 export interface SweepRequest {

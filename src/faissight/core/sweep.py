@@ -14,6 +14,7 @@ from typing import Literal
 import numpy as np
 import numpy.typing as npt
 
+from faissight.core import ivf
 from faissight.core._faiss import import_faiss
 from faissight.core.search import GroundTruth, resolve_search_params
 from faissight.core.types import LoadedIndex
@@ -138,6 +139,8 @@ class WorstQuery:
     id: int | None
     """The query's own stored id for sampled queries; ``None`` for given queries."""
     recall: float
+    probe_coverage: float | None = None
+    """IVF: share of its true neighbours in the lists probed at this setting (caps recall)."""
 
 
 @dataclass(frozen=True)
@@ -158,6 +161,12 @@ class SweepPoint:
     """
     worst_queries: list[WorstQuery] = field(default_factory=list)
     """Up to ``N_WORST_QUERIES`` lowest-recall queries, worst first (ties by query order)."""
+    probe_coverage: float | None = None
+    """IVF: mean share of true neighbours in probed lists, the most recall probing allows.
+
+    ``probe_coverage - recall`` is the share lost inside probed lists (compression,
+    transforms, ties); ``1 - probe_coverage`` is the share in lists that weren't probed.
+    """
 
     def fraction_below(self, target_recall: float) -> float | None:
         """Share of queries whose own recall is below ``target_recall`` (None if unknown)."""
@@ -169,9 +178,14 @@ class SweepPoint:
 
 
 def summarize_recalls(
-    recalls: npt.NDArray[np.float64], exclude_ids: IntArray | None
+    recalls: npt.NDArray[np.float64],
+    exclude_ids: IntArray | None,
+    coverage: npt.NDArray[np.float64] | None = None,
 ) -> tuple[float, float, list[tuple[float, int]], list[WorstQuery]]:
-    """95% interval of the mean, exact distribution and worst queries for per-query recalls."""
+    """95% interval of the mean, exact distribution and worst queries for per-query recalls.
+
+    ``coverage`` (IVF) is each query's probe coverage, attached to its worst queries.
+    """
     n = len(recalls)
     mean = float(recalls.mean())
     if n > 1:
@@ -184,7 +198,10 @@ def summarize_recalls(
     order = np.argsort(recalls, kind="stable")[:N_WORST_QUERIES]
     worst = [
         WorstQuery(
-            int(i), int(exclude_ids[i]) if exclude_ids is not None else None, float(recalls[i])
+            int(i),
+            int(exclude_ids[i]) if exclude_ids is not None else None,
+            float(recalls[i]),
+            float(coverage[i]) if coverage is not None else None,
         )
         for i in order
     ]
@@ -204,6 +221,21 @@ class SweepResult:
     query_sha256: str = ""
     environment: dict[str, str | int] = field(default_factory=dict)
     query_seed: int | None = None
+    coverage_curve: npt.NDArray[np.float64] | None = field(default=None, repr=False, compare=False)
+    """IVF: probe coverage at every nprobe ``0..nlist`` (see :func:`ivf.probe_coverage`)."""
+
+    def coverage_at(self, nprobe: int) -> float | None:
+        """Probe coverage at any nprobe, measured or not; ``None`` without IVF data."""
+        if self.coverage_curve is None:
+            return None
+        return float(self.coverage_curve[min(max(nprobe, 0), len(self.coverage_curve) - 1)])
+
+    def nprobe_for_coverage(self, coverage: float) -> int | None:
+        """Smallest nprobe whose probe coverage reaches ``coverage``; ``None`` if none does."""
+        if self.coverage_curve is None:
+            return None
+        hit = np.nonzero(self.coverage_curve >= coverage - 1e-9)[0]
+        return int(hit[0]) if len(hit) else None
 
     def recommend(self, target_recall: float, *, confident: bool = False) -> SweepPoint | None:
         """Smallest parameter value whose mean recall meets ``target_recall``.
@@ -260,11 +292,14 @@ def sweep(
     progress: ProgressFn | None = None,
     repeats: int = 3,
     seed: int = 0,
+    assignments: ivf.Assignments | None = None,
 ) -> SweepResult:
     """Measure recall@k and per-query latency at each parameter value.
 
     Queries run one at a time on a single FAISS thread (restored afterwards), after an
-    untimed warm-up pass, so latencies are stable and comparable across values.
+    untimed warm-up pass, so latencies are stable and comparable across values. For an
+    nprobe sweep, ``assignments`` (from :func:`ivf.assignments`) adds probe coverage: how
+    many true neighbours sit in probed lists, which separates probing from ranking losses.
     """
     faiss = import_faiss()
     param, vals = check_values(li, param, values)
@@ -288,6 +323,11 @@ def sweep(
     k_search = min(k + (excl is not None), max(li.ntotal, 1))
     n = len(queries)
     points: list[SweepPoint] = []
+    ranks, curve = None, None
+    if param is SweepParam.NPROBE and assignments is not None:
+        report(0.0, "Locating true neighbours' lists")
+        ranks = ivf.truth_probe_ranks(li, queries.vectors, truth, assignments)
+        curve = ivf.probe_coverage(ranks, int(li.ivf.nlist))
 
     with _TIMING_LOCK:
         prev_threads = faiss.omp_get_max_threads()
@@ -316,7 +356,8 @@ def sweep(
                                 row = row[row != excl[i]]
                             true_row = truth[i][truth[i] >= 0]
                             recalls[i] = np.isin(true_row, row[:k]).mean() if len(true_row) else 1.0
-                low, high, distribution, worst = summarize_recalls(recalls, excl)
+                coverage = ivf.query_probe_coverage(ranks, v) if ranks is not None else None
+                low, high, distribution, worst = summarize_recalls(recalls, excl, coverage)
                 points.append(
                     SweepPoint(
                         value=v,
@@ -327,6 +368,7 @@ def sweep(
                         recall_ci_high=high,
                         recall_distribution=distribution,
                         worst_queries=worst,
+                        probe_coverage=float(coverage.mean()) if coverage is not None else None,
                     )
                 )
         finally:
@@ -344,6 +386,7 @@ def sweep(
         query_sha256=query_fingerprint(queries),
         environment=benchmark_environment(),
         query_seed=queries.seed,
+        coverage_curve=curve,
     )
 
 
