@@ -14,7 +14,7 @@ from typing import Literal
 
 from faissight.core.ivf import ListStats
 from faissight.core.search import MissReason, probed_miss_reason
-from faissight.core.sweep import SweepParam, SweepPoint, SweepResult
+from faissight.core.sweep import Choice, SweepParam, SweepPoint, SweepResult
 from faissight.core.types import IndexKind, LoadedIndex
 
 # Recall gained per doubling of the parameter below which a curve counts as flat.
@@ -50,6 +50,8 @@ class SuggestionKind(str, Enum):
     """The mean meets the target but a tail of queries finds few of its neighbours."""
     LIST_IMBALANCE = "LIST_IMBALANCE"
     """IVF lists are unevenly filled."""
+    LATENCY_BUDGET = "LATENCY_BUDGET"
+    """The recall target is reachable, but not within the p95 latency budget."""
 
 
 @dataclass(frozen=True)
@@ -86,19 +88,25 @@ def advise(
     list_stats: ListStats | None = None,
     max_value: int | None = None,
     can_compare: bool = False,
+    max_p95_ms: float | None = None,
 ) -> list[Suggestion]:
     """Suggested next steps for a finished sweep, most important first.
 
-    ``confident`` uses the same rule as :meth:`SweepResult.recommend`. ``max_value`` is the
-    largest value the parameter accepts (nlist for nprobe; ``None`` = unbounded) and
-    ``can_compare`` says whether other indexes are loaded for a side-by-side comparison.
+    ``confident`` and ``max_p95_ms`` are the rules of :meth:`SweepResult.choose`.
+    ``max_value`` is the largest value the parameter accepts (nlist for nprobe; ``None`` =
+    unbounded) and ``can_compare`` says whether other indexes are loaded for a side-by-side
+    comparison. The recall rules look at the setting that meets the recall target, budget
+    or not; a budget conflict is its own suggestion.
     """
     if not result.points:
         return []
     if result.param is SweepParam.NPROBE and max_value is None:
         max_value = int(li.ivf.nlist)
     out: list[Suggestion] = []
-    rec = result.recommend(target_recall, confident=confident)
+    choice = result.choose(target_recall, confident=confident, max_p95_ms=max_p95_ms)
+    if choice.status == "latency":
+        out.append(_over_budget(result, choice, target_recall, can_compare))
+    rec = choice.by_recall
     top = max(result.points, key=lambda p: p.value)
     if rec is None:
         if top.probe_coverage is not None and result.coverage_curve is not None:
@@ -332,6 +340,43 @@ def _trend_short(
             at_value=top.value,
         )
     ]
+
+
+def _over_budget(
+    result: SweepResult, choice: Choice, target: float, can_compare: bool
+) -> Suggestion:
+    rec, best, budget = choice.by_recall, choice.best_in_budget, choice.max_p95_ms
+    assert rec is not None
+    assert budget is not None
+    name = result.param.value
+    detail = (
+        f"Recall {target:.2f} first comes at {name} {rec.value}, with a p95 latency of "
+        f"{rec.latency_p95_ms:.3g} ms: over the {budget:g} ms budget."
+    )
+    evidence = [
+        Evidence(f"p95 at {name} {rec.value}", f"{rec.latency_p95_ms:.3g} ms"),
+        Evidence("Budget", f"{budget:g} ms"),
+    ]
+    if best is not None:
+        detail += (
+            f" Within the budget, the best is {name} {best.value} with recall {best.recall:.3f}."
+        )
+        evidence.append(Evidence(f"Recall at {name} {best.value}", f"{best.recall:.3f}"))
+    else:
+        detail += " No setting tried is within the budget."
+    detail += (
+        " Lower the target or raise the budget, or make each query cheaper to search "
+        "(fewer or smaller codes to scan) and compare that index here. Latencies are "
+        "single-threaded, so check the budget against the same measurement."
+    )
+    return Suggestion(
+        SuggestionKind.LATENCY_BUDGET,
+        "No setting meets both the recall target and the latency budget",
+        detail,
+        evidence,
+        view="compare" if can_compare else None,
+        at_value=rec.value,
+    )
 
 
 def _failing_queries(result: SweepResult, rec: SweepPoint) -> Suggestion | None:

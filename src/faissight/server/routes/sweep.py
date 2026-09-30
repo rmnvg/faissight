@@ -3,11 +3,12 @@
 from __future__ import annotations
 
 from dataclasses import asdict
-from typing import Annotated
+from typing import Annotated, Any
 
 from fastapi import APIRouter, Query
 from fastapi.responses import JSONResponse
 
+from faissight.core import runs
 from faissight.core.jobs import Job
 from faissight.core.sweep import SweepResult, default_values, param_for
 from faissight.server import schemas as S
@@ -104,16 +105,7 @@ def get_sweep(job_id: str, session: SessionDep) -> JSONResponse:
     return _sweep_response(job_id, job, session)
 
 
-@router.get("/sweep/{job_id}/advice", response_model=S.SweepAdviceResponse)
-def sweep_advice(
-    job_id: str,
-    session: SessionDep,
-    target: Annotated[float, Query(ge=0.0, le=1.0, description="Target recall@k.")] = 0.95,
-    confident: Annotated[
-        bool, Query(description="Judge by the 95% lower bound of recall, not the mean.")
-    ] = False,
-) -> S.SweepAdviceResponse:
-    """Suggested next steps for a finished sweep, with the measurements behind each."""
+def _finished_sweep(session: Session, job_id: str) -> SweepResult:
     job = session.get_sweep_job(job_id)
     if job is None:
         raise ApiError(
@@ -123,10 +115,90 @@ def sweep_advice(
         raise ApiError(
             409, "NOT_READY", "This sweep hasn't finished.", "Poll GET /api/sweep/{job_id} first."
         )
-    suggestions = session.sweep_advice(job.result, target, confident=confident)
+    return job.result
+
+
+@router.get("/sweep/{job_id}/run")
+def sweep_run(
+    job_id: str,
+    session: SessionDep,
+    target: Annotated[float, Query(ge=0.0, le=1.0, description="Target recall@k.")] = 0.95,
+    confident: Annotated[bool, Query(description="Judge by the 95% lower bound.")] = False,
+    max_p95_ms: Annotated[float | None, Query(gt=0, description="p95 budget (ms).")] = None,
+    label: Annotated[str | None, Query(max_length=200)] = None,
+) -> dict[str, Any]:
+    """A saveable record of a finished sweep: index and query identity, settings,
+    environment, measurements, the decision for a target, and the worst queries."""
+    return session.sweep_run(
+        _finished_sweep(session, job_id),
+        target,
+        confident=confident,
+        max_p95_ms=max_p95_ms,
+        label=label,
+    )
+
+
+@router.post("/sweep/{job_id}/baseline", response_model=S.BaselineResponse)
+def sweep_baseline(job_id: str, req: S.BaselineRequest, session: SessionDep) -> S.BaselineResponse:
+    """Compare a finished sweep with a saved run, setting by setting."""
+    current = session.sweep_run(
+        _finished_sweep(session, job_id),
+        req.target,
+        confident=req.confident,
+        max_p95_ms=req.max_p95_ms,
+    )
+    base = runs.check_run(req.baseline)
+    cmp = runs.compare_runs(
+        base,
+        current,
+        max_recall_drop=req.max_recall_drop,
+        max_p95_increase=req.max_p95_increase,
+        min_p95_increase_ms=req.min_p95_increase_ms,
+    )
+    return S.BaselineResponse(
+        baseline_label=base.get("label"),
+        baseline_created_at=base.get("created_at"),
+        baseline_index=base["index"].get("name"),
+        points=[
+            S.PointDeltaOut(
+                **asdict(d),
+                recall_change=d.recall_change,
+                p95_change=d.p95_change,
+            )
+            for d in cmp.points
+        ],
+        regressed=cmp.regressed,
+        recall_comparable=cmp.recall_comparable,
+        latency_comparable=cmp.latency_comparable,
+        notes=cmp.notes,
+        baseline_recommended=cmp.baseline_recommended,
+        recommended=cmp.recommended,
+        max_recall_drop=cmp.max_recall_drop,
+        max_p95_increase=cmp.max_p95_increase,
+        min_p95_increase_ms=cmp.min_p95_increase_ms,
+    )
+
+
+@router.get("/sweep/{job_id}/advice", response_model=S.SweepAdviceResponse)
+def sweep_advice(
+    job_id: str,
+    session: SessionDep,
+    target: Annotated[float, Query(ge=0.0, le=1.0, description="Target recall@k.")] = 0.95,
+    confident: Annotated[
+        bool, Query(description="Judge by the 95% lower bound of recall, not the mean.")
+    ] = False,
+    max_p95_ms: Annotated[
+        float | None, Query(gt=0, description="p95 latency budget per query (ms).")
+    ] = None,
+) -> S.SweepAdviceResponse:
+    """Suggested next steps for a finished sweep, with the measurements behind each."""
+    suggestions = session.sweep_advice(
+        _finished_sweep(session, job_id), target, confident=confident, max_p95_ms=max_p95_ms
+    )
     return S.SweepAdviceResponse(
         target_recall=target,
         confident=confident,
+        max_p95_ms=max_p95_ms,
         suggestions=[
             S.SuggestionOut.model_validate({**asdict(s), "kind": s.kind.value}) for s in suggestions
         ],

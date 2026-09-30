@@ -1,4 +1,5 @@
 import { expect, test } from '@playwright/test'
+import { readFile } from 'node:fs/promises'
 
 test('overview loads with index health', async ({ page }) => {
   await page.goto('/')
@@ -165,6 +166,66 @@ test('tuner: suggested next steps explain a miss and run the follow-up sweep', a
   await expect(page.locator('section', { hasText: 'All measurements' }).locator('tbody tr')).not.toHaveCount(1, {
     timeout: 20_000,
   })
+})
+
+test('tuner: a held-out evaluation query opens in the explorer by its row', async ({ page }) => {
+  // The HNSW server has --queries: worst queries have no stored id, only a row.
+  await page.goto('http://127.0.0.1:8798/#/tuner')
+  await page.getByRole('textbox').first().fill('4, 16')
+  await page.getByRole('button', { name: 'Run sweep' }).click()
+  const worst = page.locator('section', { hasText: /Worst queries at efSearch/ })
+  await expect(worst.getByText(/^query #\d+$/).first()).toBeVisible({ timeout: 20_000 })
+  await worst.getByRole('button', { name: 'Explain' }).first().click()
+  await expect(page).toHaveURL(/#\/query\?row=\d+&k=10&ef=\d+/)
+  await expect(page.getByRole('radio', { name: 'Evaluation query' })).toBeChecked()
+  await expect(page.getByText('Recall@10', { exact: true })).toBeVisible()
+  const truth = page.locator('section', { hasText: 'Exact nearest neighbours' }).locator('tbody tr')
+  await expect(truth).toHaveCount(10)
+})
+
+test('tuner: a p95 latency budget the target can\'t fit in is explained', async ({ page }) => {
+  await page.goto('/#/tuner')
+  await page.getByRole('button', { name: 'Run sweep' }).click()
+  await expect(page.getByText('Recommended nprobe')).toBeVisible({ timeout: 20_000 })
+  const budget = page.getByLabel('p95 latency budget (ms)')
+  await budget.fill('0.000001')
+  await expect(page.getByText('Not reached')).toBeVisible()
+  await expect(page.getByText(/recall needs \d+, p95 .* ms: over budget/)).toBeVisible()
+  const steps = page.locator('section', { hasText: 'Suggested next steps' })
+  await expect(steps.getByText('No setting meets both the recall target and the latency budget')).toBeVisible()
+  await expect(page.getByText('over budget', { exact: false }).first()).toBeVisible()
+  await budget.fill('')
+  await expect(page.getByText('Not reached')).toHaveCount(0)
+  await expect(steps.getByText('No setting meets both')).toHaveCount(0)
+})
+
+test('tuner: save a run, then compare later sweeps with it', async ({ page }) => {
+  await page.goto('/#/tuner')
+  await page.getByRole('textbox').first().fill('1, 2')
+  await page.getByRole('button', { name: 'Run sweep' }).click()
+  await expect(page.getByText('Recommended nprobe')).toBeVisible({ timeout: 20_000 })
+
+  const downloading = page.waitForEvent('download')
+  await page.getByRole('button', { name: 'Save run' }).click()
+  const saved = await downloading
+  expect(saved.suggestedFilename()).toMatch(/^faissight-run-nprobe-\d{4}-\d{2}-\d{2}\.json$/)
+  const run = JSON.parse(await readFile(await saved.path(), 'utf8'))
+  expect(run.format).toBe('faissight.sweep-run')
+
+  const card = page.locator('section', { hasText: 'Compare with a saved run' })
+  const file = card.getByLabel('Saved run file')
+  await file.setInputFiles({ name: 'same.json', mimeType: 'application/json', buffer: Buffer.from(JSON.stringify(run)) })
+  await expect(card.getByText('No regressions against this run')).toBeVisible()
+  await expect(card.locator('tbody tr')).toHaveCount(2)
+
+  // A baseline whose recall was higher: this sweep regressed.
+  for (const p of run.points) p.recall = p.recall + 0.5
+  await file.setInputFiles({ name: 'better.json', mimeType: 'application/json', buffer: Buffer.from(JSON.stringify(run)) })
+  await expect(card.getByText(/Regressed at 2 of 2 settings/)).toBeVisible()
+  await expect(card.getByText('regressed: recall').first()).toBeVisible()
+
+  await file.setInputFiles({ name: 'bad.json', mimeType: 'application/json', buffer: Buffer.from('{"format": "x"}') })
+  await expect(card.getByText(/Not a faissight sweep run/)).toBeVisible()
 })
 
 test('compare: side-by-side recall, latency, size and changed neighbours', async ({ page }) => {

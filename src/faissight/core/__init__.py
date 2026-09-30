@@ -50,6 +50,14 @@ from faissight.core.projection import (
     place_points,
     stratified_sample,
 )
+from faissight.core.runs import (
+    RunComparison,
+    RunFormatError,
+    compare_runs,
+    load_run,
+    run_record,
+    save_run,
+)
 from faissight.core.search import (
     GroundTruth,
     IvfTrace,
@@ -112,6 +120,8 @@ __all__ = [
     "QueryReport",
     "QuerySet",
     "ResolvedQuery",
+    "RunComparison",
+    "RunFormatError",
     "SearchResult",
     "Suggestion",
     "SuggestionKind",
@@ -127,6 +137,7 @@ __all__ = [
     "centroids",
     "changed_queries",
     "compare_indexes",
+    "compare_runs",
     "compute_projection",
     "default_values",
     "explain_query",
@@ -141,11 +152,14 @@ __all__ = [
     "list_stats",
     "load_index",
     "load_metadata",
+    "load_run",
     "place_points",
     "recall_at_k",
     "reconstruct_all",
     "resolve_query",
+    "run_record",
     "sample_queries",
+    "save_run",
     "stratified_sample",
     "trace_ivf",
 ]

@@ -213,3 +213,21 @@ def test_every_suggestion_says_where_it_was_measured(indexes) -> None:
     assert {s.at_value for s in A.advise(r, indexes["ivf_pq"], 0.95)} == {4}
     r = _hnsw([_point(64, 0.900), _point(128, 0.902)])
     assert [s.at_value for s in A.advise(r, indexes["hnsw_flat"], 0.95)] == [128]
+
+
+def test_latency_budget_conflict_comes_first(indexes) -> None:
+    r = _hnsw(
+        [
+            _point(16, 0.90, latency=(1.0, 2.0)),
+            _point(64, 0.96, latency=(3.0, 6.0)),
+            _point(128, 0.97, latency=(5.0, 9.0)),
+        ]
+    )
+    (s,) = A.advise(r, indexes["hnsw_flat"], 0.95, max_p95_ms=4.0)
+    assert s.kind is K.LATENCY_BUDGET
+    assert "efSearch 64, with a p95 latency of 6 ms: over the 4 ms budget" in s.detail
+    assert "the best is efSearch 16 with recall 0.900" in s.detail
+    assert s.at_value == 64
+    assert A.advise(r, indexes["hnsw_flat"], 0.95, max_p95_ms=6.0) == []
+    (s,) = A.advise(r, indexes["hnsw_flat"], 0.95, max_p95_ms=1.0)
+    assert "No setting tried is within the budget" in s.detail

@@ -123,3 +123,27 @@ def test_idmap_and_other_storage() -> None:
 def test_not_hnsw(synthetic) -> None:
     with pytest.raises(H.NotAnHnswIndexError):
         H.extract_graph(load_index(synthetic["ivf_flat"]))
+
+
+def test_degrees_are_the_same_in_small_batches(graph, monkeypatch) -> None:
+    _, g = graph
+    expected = [g.degrees(level) for level in range(g.max_level + 1)]
+    monkeypatch.setattr(H, "_BATCH_CELLS", 7)  # a few nodes per batch, with a ragged tail
+    for level, want in enumerate(expected):
+        np.testing.assert_array_equal(g.degrees(level), want)
+    assert g.degrees(0).sum() == len(g.edges(0)[0])
+
+
+def test_graph_borrows_the_index_links_read_only() -> None:
+    x = np.random.default_rng(0).standard_normal((200, 8)).astype(np.float32)
+    index = faiss.IndexHNSWFlat(8, 4)
+    index.add(x)
+    g = H.extract_graph(load_index(index))
+    expected = faiss.vector_to_array(index.hnsw.neighbors)
+    del index  # the graph keeps the index (and so the borrowed memory) alive
+    np.testing.assert_array_equal(g.neighbors, expected)
+    assert not g.neighbors.flags.writeable
+    assert not g.offsets.flags.writeable
+    empty = H.extract_graph(load_index(faiss.IndexHNSWFlat(8, 4)))
+    assert empty.ntotal == 0
+    assert len(empty.neighbors) == 0

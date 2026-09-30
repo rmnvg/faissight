@@ -22,11 +22,14 @@ export function useQueryRunner(info: Info, params: URLSearchParams) {
   const hasEmbedder = info.inputs.embedder !== null
 
   const urlId = parseId(params.get('id'))
+  const rowParam = intParam(params, 'row')
+  const urlRow = rowParam !== null && rowParam >= 0 ? rowParam : null
   const [queryMode, setQueryMode] = useState<QueryMode>(
-    urlId !== null ? 'id' : hasEmbedder ? 'text' : 'id',
+    urlId !== null ? 'id' : urlRow !== null ? 'row' : hasEmbedder ? 'text' : 'id',
   )
   const [text, setText] = useState(params.get('text') ?? '')
   const [idInput, setIdInput] = useState(urlId !== null ? String(urlId) : '')
+  const [rowInput, setRowInput] = useState(urlRow !== null ? String(urlRow) : '')
   const [vectorInput, setVectorInput] = useState('')
   const [k, setK] = useState(intParam(params, 'k') ?? 10)
   const [nprobe, setNprobe] = useState(intParam(params, 'nprobe') ?? Number(info.params.nprobe ?? 1))
@@ -58,6 +61,12 @@ export function useQueryRunner(info: Info, params: URLSearchParams) {
       const id = parseId(idInput)
       if (id === null) return fail('Enter an integer id.')
       query = { id }
+    } else if (queryMode === 'row') {
+      const row = Number(rowInput.trim())
+      const n = info.inputs.queries ?? 0
+      if (rowInput.trim() === '' || !Number.isInteger(row) || row < 0 || row >= n)
+        return fail(`Enter a row from 0 to ${n - 1} of the evaluation queries.`)
+      query = { row }
     } else {
       const nums = vectorInput
         .replace(/[[\]\s]+/g, ' ')
@@ -81,6 +90,7 @@ export function useQueryRunner(info: Info, params: URLSearchParams) {
 
   const urlParams = (req: SearchRequest): Record<string, string | number | null> => ({
     id: req.query.id ?? null,
+    row: req.query.row ?? null,
     text: req.query.text ?? null,
     k: req.k,
     nprobe: req.nprobe ?? null,
@@ -106,21 +116,22 @@ export function useQueryRunner(info: Info, params: URLSearchParams) {
   const urlText = params.get('text')
   const autoRan = useRef<string | null>(null)
   useEffect(() => {
-    if ((urlId === null && !urlText) || autoRan.current === urlKey) return
+    if ((urlId === null && urlRow === null && !urlText) || autoRan.current === urlKey) return
     autoRan.current = urlKey
     const urlK = intParam(params, 'k') ?? k
     const urlNprobe = intParam(params, 'nprobe') ?? nprobe
     const urlEf = intParam(params, 'ef') ?? efSearch
     const urlCompare = params.get('compare') !== '0'
-    setQueryMode(urlId !== null ? 'id' : 'text')
+    setQueryMode(urlId !== null ? 'id' : urlRow !== null ? 'row' : 'text')
     if (urlId !== null) setIdInput(String(urlId))
+    else if (urlRow !== null) setRowInput(String(urlRow))
     else setText(urlText ?? '')
     setK(urlK)
     setNprobe(urlNprobe)
     setEfSearch(urlEf)
     setCompare(urlCompare)
     run.mutate({
-      query: urlId !== null ? { id: urlId } : { text: urlText ?? '' },
+      query: urlId !== null ? { id: urlId } : urlRow !== null ? { row: urlRow } : { text: urlText ?? '' },
       k: urlK,
       compare: urlCompare,
       ...(isIvf ? { nprobe: urlNprobe } : {}),
@@ -140,6 +151,8 @@ export function useQueryRunner(info: Info, params: URLSearchParams) {
       setText,
       idInput,
       setIdInput,
+      rowInput,
+      setRowInput,
       vectorInput,
       setVectorInput,
       k,

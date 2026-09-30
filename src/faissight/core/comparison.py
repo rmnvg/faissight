@@ -18,6 +18,7 @@ from faissight.core.sweep import (
     ground_truth_ids,
     query_fingerprint,
     summarize_recalls,
+    warm_up,
 )
 from faissight.core.types import LoadedIndex
 from faissight.core.vectors import VectorSource, validate_ids
@@ -114,8 +115,7 @@ def compare_indexes(
     faiss = import_faiss()
     report = progress or (lambda frac, msg: None)
     if truth is None:
-        report(0.0, "Computing exact ground truth")
-        truth = ground_truth_ids(GroundTruth(source, left.metric), queries, k)
+        truth = ground_truth_ids(GroundTruth(source, left.metric), queries, k, report)
     elif truth.shape != (len(queries), k):
         raise ValueError(f"truth must have shape ({len(queries)}, {k}), got {truth.shape}.")
     settings = [
@@ -132,7 +132,7 @@ def compare_indexes(
         faiss.omp_set_num_threads(1)
         try:
             for li, (params, _) in zip(indexes, settings, strict=True):
-                li.index.search(queries.vectors, count, params=params)
+                warm_up(li, queries.vectors, count, params, report, 0.0, "Warming up")
             rng = np.random.default_rng(seed)
             for repeat in range(repeats):
                 for j, i in enumerate(rng.permutation(n)):

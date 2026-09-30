@@ -8,6 +8,7 @@ import numpy as np
 import pytest
 
 from faissight import session as session_mod
+from faissight.core import hnsw_trace
 from faissight.core import vectors as V
 from faissight.core.projection import ProjectionUnavailableError
 from faissight.session import InputError, Session
@@ -268,16 +269,26 @@ def test_sweep_job_validation(synthetic) -> None:
         s.sweep_job(k=0)
 
 
-def test_hnsw_layout_on_fresh_session_does_not_deadlock(synthetic) -> None:
-    # hnsw_layout waits for the PCA job, whose thread needs other lazy values (source).
+def test_hnsw_positions_on_fresh_session_do_not_deadlock(synthetic) -> None:
+    # hnsw_positions waits for the PCA job, whose thread needs other lazy values (source).
     # With one session-wide lock this deadlocked; run it in a thread with a timeout.
     s = Session(synthetic["hnsw_flat"])
     out = {}
-    t = threading.Thread(target=lambda: out.setdefault("xy", s.hnsw_layout()), daemon=True)
+    nodes = np.array([0, 5, 7])
+    t = threading.Thread(target=lambda: out.setdefault("xy", s.hnsw_positions(nodes)), daemon=True)
     t.start()
     t.join(30)
-    assert not t.is_alive(), "hnsw_layout deadlocked"
-    assert out["xy"].shape == (N, 2)
+    assert not t.is_alive(), "hnsw_positions deadlocked"
+    assert out["xy"].shape == (3, 2)
+
+
+def test_hnsw_positions_project_only_the_given_nodes(synthetic) -> None:
+    s = Session(synthetic["hnsw_flat"], vectors=synthetic["vectors"], disk_cache=False)
+    nodes = np.array([3, 1, 400])
+    xy = s.hnsw_positions(nodes)
+    pca = s.projection_job().result.pca
+    np.testing.assert_allclose(xy, pca.transform(hnsw_trace.storage_vectors(s.li)[nodes]))
+    assert s.hnsw_positions(np.empty(0, np.int64)).shape == (0, 2)
 
 
 def test_sweep_cache_reuses_ground_truth_and_bounds_entries(synthetic) -> None:
@@ -360,7 +371,7 @@ def test_compare_job_reuses_sweep_ground_truth(synthetic, monkeypatch) -> None:
     job.wait(30)
     calls = []
     original = s._sweep_data
-    monkeypatch.setattr(s, "_sweep_data", lambda *a: calls.append(a) or original(*a))
+    monkeypatch.setattr(s, "_sweep_data", lambda *a: calls.append(a[:3]) or original(*a))
     job_id, cjob = s.compare_job(n_queries=15, right_nprobe=2)
     cjob.wait(30)
     assert cjob.result is not None

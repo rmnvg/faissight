@@ -16,6 +16,7 @@ from faissight.core.embed import EmbedderUnavailableError
 from faissight.core.ivf import NotAnIVFIndexError
 from faissight.core.jobs import JobCapacityError
 from faissight.core.projection import ProjectionUnavailableError
+from faissight.core.runs import RunFormatError
 from faissight.core.search import QueryError
 from faissight.server.routes import ApiError, router
 from faissight.session import DemoLimitError, InputError, Session
@@ -81,6 +82,7 @@ def _install_error_handlers(app: FastAPI) -> None:
     simple = {
         QueryError: (400, "QUERY_ERROR", None),
         NotAnIVFIndexError: (400, "NOT_IVF", "This view needs an IVF index."),
+        RunFormatError: (400, "BAD_RUN", "Use a file saved with Save run or sweep --save."),
     }
     for exc_type, (status, code, hint) in simple.items():
 

@@ -82,7 +82,7 @@ def hnsw_graph(
     src, dst = g.edges(level, nodes)
     pairs = {(min(a, b), max(a, b)) for a, b in zip(src.tolist(), dst.tolist(), strict=True)}
     pos = {int(n): i for i, n in enumerate(nodes.tolist())}
-    xy = session.hnsw_layout()[nodes]
+    xy = session.hnsw_positions(nodes)
     return S.HnswGraphResponse(
         level=level,
         n_level_nodes=len(level_nodes),
@@ -103,6 +103,7 @@ def trace_hnsw(req: S.SearchRequest, session: HnswDep) -> S.HnswTraceResponse:
         id=req.query.id,
         vector=req.query.vector,
         text=req.query.text,
+        row=req.query.row,
         k=req.k,
         ef_search=req.ef_search,
         compare=req.compare,
@@ -181,7 +182,7 @@ def trace_hnsw(req: S.SearchRequest, session: HnswDep) -> S.HnswTraceResponse:
     if report.truth is not None:
         involved |= {int(n) for n in HT.internal_ids(li, report.truth.valid_ids) if n >= 0}
     nodes = np.array(sorted(involved), dtype=np.int64)
-    xy = session.hnsw_layout()[nodes]
+    xy = session.hnsw_positions(nodes)
     q_core = li.to_core_space(np.asarray(report.query.vector, dtype=np.float32)[None])
     job = session.jobs.get(("projection", "pca", 2))
     pca = job.result.pca if job is not None and job.is_done and job.result is not None else None

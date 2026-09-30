@@ -112,14 +112,37 @@ faissight serve INDEX [--vectors v.npy] [--ids ids.npy] [--meta chunks.jsonl]
                       [--compare other.index ...] [--mmap]
 faissight info INDEX                          # kind, wrappers, parameters
 faissight sweep INDEX --vectors v.npy [--param nprobe] [--target 0.95]
-                      [--repeats 3] [--seed 0] [--json]
+                      [--max-p95-ms 10] [--repeats 3] [--seed 0] [--json]
+                      [--save run.json] [--baseline earlier.json]
+faissight runs diff EARLIER.json LATER.json   # regressions between saved runs
 faissight compare LEFT RIGHT --vectors v.npy [--queries q.npy] [--ids ids.npy]
                       [--left-nprobe 4] [--right-ef-search 64] [--json]
 faissight demo [--index ivf_pq|ivf_flat|hnsw]
+faissight cache info | clear [--older-than-days 30] [--max-mb 500]
 ```
 
-`faissight sweep` exits with code 2 when no value reaches `--target`, so it can guard recall
-in CI.
+`faissight sweep` exits with code 2 when no value reaches `--target` (within the p95 budget
+of `--max-p95-ms`, if given), and with code 3 when `--baseline` shows a regression, so it can
+guard recall and latency in CI.
+
+### Saved runs and baselines
+
+`faissight sweep --save run.json` (or **Save run** in the Tuner) keeps a sweep as JSON: the
+index's sha1 and parameters, the query set's fingerprint, the settings, the environment,
+every measurement, the recommendation for your target, and the worst queries. Compare a
+later sweep with it using `--baseline run.json`, the Tuner's **Compare with a saved run**, or
+`faissight runs diff`. A setting regresses when its recall drops by more than
+`--max-recall-drop` (0.01), or when its p95 grows by more than `--max-p95-increase` (20%)
+*and* by more than `--min-p95-increase-ms` (0.05 ms): sub-millisecond timings vary between
+runs, and the floor keeps that noise from failing CI. Recall is compared only on the same
+query set and k. Latency is compared only when both runs were measured with the same FAISS
+version and machine. Otherwise the comparison says why it doesn't judge them.
+
+```bash
+faissight sweep index.faiss --vectors v.npy --queries eval.npy --save baseline.json
+# ... rebuild or retrain the index ...
+faissight sweep new.faiss --vectors v.npy --queries eval.npy --baseline baseline.json
+```
 
 ## Reproducible tuning and index comparison
 
@@ -133,7 +156,10 @@ Each setting also reports an approximate 95% interval for mean recall, the exact
 recall distribution (so "how many queries fall below the target" is known, not just the
 mean) and its lowest-recall queries. The recommendation is the *smallest* value meeting the
 target; when a larger value happens to measure faster, it is reported separately as the
-fastest measured setting, since that gap is usually timing noise.
+fastest measured setting, since that gap is usually timing noise. A p95 latency budget
+(`--max-p95-ms`, or the Tuner's budget field) adds a second constraint. When the target is
+reachable but not within the budget, the result says so, with the setting recall needs and
+the best recall the budget allows, instead of reporting "not reached".
 
 ### Suggested next steps
 
@@ -189,6 +215,13 @@ returns `429 JOB_CAPACITY`. The Tuner's **Cancel sweep** button (or
 checkpoint. A native FAISS call already running must finish first. Sessions retain up to
 32 completed jobs for one hour, with expired entries removed on the next access; query and
 ground-truth caches are limited to four entries and 64 MiB. An evicted sweep can be rerun.
+
+Projections are cached on disk under `~/.cache/faissight/<index sha1>/` (or
+`$FAISSIGHT_CACHE_DIR`). The cache only saves time: if it can't be written (a read-only home
+or a full disk), the projection is still shown, with a warning in the Cluster map and the
+server log. `faissight cache info` shows usage per index. `faissight cache clear` removes
+everything, or only entries unused for `--older-than-days`, or least recently used entries
+beyond `--max-mb`. It never touches the demo data. `serve --no-cache` skips the disk cache.
 
 ## How it compares
 

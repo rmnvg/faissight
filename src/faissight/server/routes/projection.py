@@ -74,4 +74,5 @@ def projection(
         n_total=proj.n_total,
         sampled=proj.sampled,
         explained_variance=ev,
+        cache_warning=proj.cache_warning,
     )

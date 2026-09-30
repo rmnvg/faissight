@@ -17,7 +17,7 @@ from __future__ import annotations
 import heapq
 from dataclasses import dataclass, field
 from enum import Enum
-from typing import Any
+from typing import Any, Protocol
 
 import numpy as np
 import numpy.typing as npt
@@ -83,11 +83,53 @@ class NeighbourOutcome(str, Enum):
 
 
 def storage_vectors(li: LoadedIndex) -> FloatArray:
-    """Core-space vectors of every HNSW node, by internal id (decoded for SQ/PQ storage)."""
+    """Core-space vectors of every HNSW node, by internal id (decoded for SQ/PQ storage).
+
+    Copies or decodes all of them; :func:`node_vectors` avoids that.
+    """
     faiss = import_faiss()
     storage = faiss.downcast_index(li.core.storage)
     out: FloatArray = storage.reconstruct_n(0, storage.ntotal).astype(np.float32, copy=False)
     return out
+
+
+class NodeVectors(Protocol):
+    """Core-space vectors of HNSW nodes by internal id: ``vectors[nodes]`` -> ``(len, d)``."""
+
+    def __len__(self) -> int: ...
+
+    def __getitem__(self, nodes: Any) -> Any: ...
+
+
+class _DecodedNodes:
+    """Decodes SQ/PQ storage for just the nodes asked for."""
+
+    def __init__(self, storage: Any) -> None:
+        self._storage = storage
+
+    def __len__(self) -> int:
+        return int(self._storage.ntotal)
+
+    def __getitem__(self, nodes: Any) -> FloatArray:
+        ids = np.atleast_1d(np.asarray(nodes, dtype=np.int64))
+        out: FloatArray = self._storage.reconstruct_batch(ids).astype(np.float32, copy=False)
+        return out
+
+
+def node_vectors(li: LoadedIndex) -> NodeVectors:
+    """Node vectors without copying the storage: a zero-copy view of flat storage, or
+    on-demand decoding of SQ/PQ storage.
+
+    A trace or a drawn level touches a few thousand nodes, so neither needs every vector.
+    The view borrows the index's memory: keep ``li`` referenced while using it.
+    """
+    faiss = import_faiss()
+    storage = faiss.downcast_index(li.core.storage)
+    n = int(storage.ntotal)
+    if isinstance(storage, faiss.IndexFlat) and n > 0:
+        view: FloatArray = faiss.rev_swig_ptr(storage.get_xb(), n * storage.d).reshape(n, storage.d)
+        return view
+    return _DecodedNodes(storage)
 
 
 class _MinimaxHeap:
@@ -133,13 +175,13 @@ class _MinimaxHeap:
 
 
 class _Distances:
-    def __init__(self, vectors: FloatArray, query: FloatArray, metric: Metric) -> None:
+    def __init__(self, vectors: NodeVectors, query: FloatArray, metric: Metric) -> None:
         self.x = vectors
         self.q = query.astype(np.float32).ravel()
         self.ip = metric is Metric.IP
 
     def __call__(self, nodes: npt.ArrayLike) -> npt.NDArray[np.float64]:
-        v = self.x[np.asarray(nodes, dtype=np.int64)]
+        v = np.asarray(self.x[np.asarray(nodes, dtype=np.int64)], dtype=np.float32)
         if self.ip:
             out: npt.NDArray[np.float64] = -(v @ self.q).astype(np.float64)
             return out
@@ -150,7 +192,7 @@ class _Distances:
 
 def trace_search(
     g: HnswGraph,
-    vectors: FloatArray,
+    vectors: NodeVectors,
     query_core: npt.ArrayLike,
     k: int,
     ef_search: int,
@@ -234,7 +276,7 @@ def neighbour_outcomes(trace: HnswTrace, truth_internal: npt.ArrayLike) -> list[
 def trace_for_index(
     li: LoadedIndex,
     g: HnswGraph,
-    vectors: FloatArray,
+    vectors: NodeVectors,
     query: npt.ArrayLike,
     k: int,
     ef_search: int | None = None,

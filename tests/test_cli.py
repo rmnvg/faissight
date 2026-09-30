@@ -416,6 +416,20 @@ def test_sweep_unreachable_target_exits_2(synthetic) -> None:
     assert "Suggested next steps" in result.output
 
 
+def test_sweep_latency_budget_gates_ci(synthetic) -> None:
+    args = ["sweep", str(synthetic["ivf_flat"]), "--vectors", str(synthetic["vectors"])]
+    args += ["--values", "1,16", "--n-queries", "20", "--target", "0.5"]
+    ok = runner.invoke(app, [*args, "--max-p95-ms", "1000", "--json"])
+    assert ok.exit_code == 0, ok.output
+    body = json.loads(ok.stdout)
+    assert (body["status"], body["max_p95_ms"]) == ("ok", 1000.0)
+    # No real search is this fast: the target is reachable, but not within the budget.
+    tight = runner.invoke(app, [*args, "--max-p95-ms", "0.000001"])
+    assert tight.exit_code == 2
+    assert "within p95 1e-06 ms" in tight.output
+    assert "latency budget" in tight.output  # the suggestion
+
+
 @pytest.mark.parametrize(
     ("args", "message"),
     [
@@ -457,3 +471,56 @@ def test_serve_demo_mode_flag(synthetic, fake_uvicorn) -> None:
     assert "Demo mode" in result.output
     (server,) = FakeServer.instances
     assert server.config.app.state.session.demo_limits is not None
+
+
+def test_cache_info_and_clear(tmp_path, monkeypatch) -> None:
+    monkeypatch.setenv("FAISSIGHT_CACHE_DIR", str(tmp_path))
+    assert "Empty." in runner.invoke(app, ["cache", "info"]).output
+    for sha, size in (("a" * 40, 3000), ("b" * 40, 5000)):
+        (tmp_path / sha).mkdir()
+        (tmp_path / sha / "proj.npz").write_bytes(b"x" * size)
+    (tmp_path / "demo-rag").mkdir()
+    info = runner.invoke(app, ["cache", "info"])
+    assert info.exit_code == 0, info.output
+    assert "aaaaaaaaaaaa" in info.output
+    assert "Total 7.8 KiB in 2 files." in info.output
+    # 0.005 MiB keeps one of the two files.
+    cleared = runner.invoke(app, ["cache", "clear", "--max-mb", "0.005"])
+    assert "Removed 1 cached projections" in cleared.output
+    cleared = runner.invoke(app, ["cache", "clear"])
+    assert "Removed 1 cached projections" in cleared.output
+    assert (tmp_path / "demo-rag").is_dir()
+
+
+def test_sweep_save_baseline_and_runs_diff(synthetic, tmp_path) -> None:
+    args = ["sweep", str(synthetic["ivf_pq"]), "--vectors", str(synthetic["vectors"])]
+    args += ["--values", "1,4", "--n-queries", "20", "--target", "0.1"]
+    base = tmp_path / "base.json"
+    saved = runner.invoke(app, [*args, "--save", str(base), "--label", "before"])
+    assert saved.exit_code == 0, saved.output
+    assert json.loads(base.read_text())["label"] == "before"
+
+    # Same run against itself: no regression.
+    same = runner.invoke(app, [*args, "--baseline", str(base), "--json"])
+    assert same.exit_code == 0, same.output
+    assert json.loads(same.stdout)["baseline"]["regressed"] is False
+
+    # A baseline with higher recall: the current run regressed.
+    better = json.loads(base.read_text())
+    for p in better["points"]:
+        p["recall"] += 0.2
+    (tmp_path / "better.json").write_text(json.dumps(better))
+    worse = runner.invoke(app, [*args, "--baseline", str(tmp_path / "better.json")])
+    assert worse.exit_code == 3
+    assert "Against the baseline" in worse.output
+    assert "Regressed" in worse.output
+
+    diff = runner.invoke(app, ["runs", "diff", str(tmp_path / "better.json"), str(base), "--json"])
+    assert diff.exit_code == 3
+    assert json.loads(diff.stdout)["regressed"] is True
+    assert runner.invoke(app, ["runs", "diff", str(base), str(base)]).exit_code == 0
+
+    (tmp_path / "bad.json").write_text("{}")
+    bad = runner.invoke(app, [*args, "--baseline", str(tmp_path / "bad.json")])
+    assert bad.exit_code == 1
+    assert "Not a faissight sweep run" in bad.output

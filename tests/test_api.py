@@ -1,3 +1,5 @@
+import json
+import os
 import time
 
 import faiss
@@ -369,6 +371,54 @@ def test_openapi_docs(ivf_client) -> None:
     assert ivf_client.get("/api/openapi.json").json()["info"]["title"] == "faissight"
 
 
+def test_search_by_evaluation_row(ivf_client, hnsw_client, synthetic) -> None:
+    queries = np.load(synthetic["queries"])
+    body = ivf_client.post("/api/search", json={"query": {"row": 3}, "k": 5}).json()
+    assert body["query_kind"] == "row"
+    by_vector = ivf_client.post(
+        "/api/search", json={"query": {"vector": queries[3].tolist()}, "k": 5}
+    ).json()
+    assert [r["id"] for r in body["results"]] == [r["id"] for r in by_vector["results"]]
+    assert body["recall"] == by_vector["recall"]
+
+    _assert_error(
+        ivf_client.post("/api/search", json={"query": {"row": len(queries)}}), 400, "QUERY_ERROR"
+    )
+    _assert_error(
+        ivf_client.post("/api/search", json={"query": {"row": -1}}), 422, "VALIDATION_ERROR"
+    )
+    # No --queries on this session: rows can't be resolved.
+    body = _assert_error(
+        hnsw_client.post("/api/trace/hnsw", json={"query": {"row": 0}}), 400, "QUERY_ERROR"
+    )
+    assert "--queries" in body["message"]
+
+
+def test_hnsw_trace_by_evaluation_row(synthetic) -> None:
+    client = _client(
+        Session(synthetic["hnsw_flat"], vectors=synthetic["vectors"], queries=synthetic["queries"])
+    )
+    body = client.post("/api/trace/hnsw", json={"query": {"row": 1}, "k": 5}).json()
+    assert len(body["results"]) == 5
+    assert body["recall"] is not None
+
+
+@pytest.mark.skipif(os.geteuid() == 0, reason="root ignores directory permissions")
+def test_projection_survives_a_read_only_cache(synthetic, tmp_path) -> None:
+    root = tmp_path / "cache"
+    root.mkdir()
+    root.chmod(0o500)
+    try:
+        s = Session(synthetic["ivf_flat"], vectors=synthetic["vectors"], cache_root=root)
+        body = _wait_projection(_client(s)).json()
+    finally:
+        root.chmod(0o700)
+    assert body["status"] == "done"
+    assert len(body["x"]) == N
+    assert "Couldn't save to the projection cache" in body["cache_warning"]
+    assert "Permission denied" in body["cache_warning"]
+
+
 # --- sweep -------------------------------------------------------------------------------
 
 
@@ -469,6 +519,17 @@ def test_sweep_probe_coverage_and_advice() -> None:
     assert max(first["sweep_values"]) <= NLIST
     assert all(set(e) == {"label", "value"} for e in first["evidence"])
 
+    tight = ivf_client.get(
+        f"/api/sweep/{job_id}/advice", params={"target": 0.0, "max_p95_ms": 1e-9}
+    ).json()
+    assert tight["max_p95_ms"] == 1e-9
+    assert tight["suggestions"][0]["kind"] == "LATENCY_BUDGET"
+    _assert_error(
+        ivf_client.get(f"/api/sweep/{job_id}/advice", params={"max_p95_ms": 0}),
+        422,
+        "VALIDATION_ERROR",
+    )
+
     easy = ivf_client.get(f"/api/sweep/{job_id}/advice", params={"target": 0.0}).json()
     assert all(s["kind"] == "LIST_IMBALANCE" for s in easy["suggestions"])
     _assert_error(
@@ -476,6 +537,47 @@ def test_sweep_probe_coverage_and_advice() -> None:
         422,
         "VALIDATION_ERROR",
     )
+
+
+def test_save_a_run_and_compare_with_it(ivf_client) -> None:
+    job_id = ivf_client.post("/api/sweep", json={"values": [1, 2], "n_queries": 20}).json()[
+        "job_id"
+    ]
+    _wait_sweep(ivf_client, job_id)
+    run = ivf_client.get(
+        f"/api/sweep/{job_id}/run", params={"target": 0.9, "max_p95_ms": 50, "label": "nightly"}
+    ).json()
+    assert (run["format"], run["label"]) == ("faissight.sweep-run", "nightly")
+    assert run["index"]["name"] == "ivf_flat.index"
+    assert run["decision"]["max_p95_ms"] == 50
+    assert run["queries"]["origin"] == "given"
+
+    same = ivf_client.post(
+        f"/api/sweep/{job_id}/baseline", json={"baseline": run, "target": 0.9, "max_p95_ms": 50}
+    ).json()
+    assert same["regressed"] is False
+    assert [p["value"] for p in same["points"]] == [1, 2]
+    assert same["baseline_label"] == "nightly"
+    assert same["notes"] == []
+
+    faster = json.loads(json.dumps(run))
+    for p in faster["points"]:
+        p["latency_p95_ms"] /= 10  # yesterday's run was ten times faster
+    worse = ivf_client.post(
+        f"/api/sweep/{job_id}/baseline",
+        json={"baseline": faster, "target": 0.9, "min_p95_increase_ms": 0},
+    ).json()
+    assert worse["regressed"] is True
+    assert all(p["latency_regressed"] and not p["recall_regressed"] for p in worse["points"])
+    assert worse["points"][0]["p95_change"] == pytest.approx(9.0)
+    assert any("different targets" in n for n in worse["notes"])
+
+    _assert_error(
+        ivf_client.post(f"/api/sweep/{job_id}/baseline", json={"baseline": {"format": "x"}}),
+        400,
+        "BAD_RUN",
+    )
+    _assert_error(ivf_client.get("/api/sweep/nope/run"), 404, "NOT_FOUND")
 
 
 def test_sweep_advice_hnsw(hnsw_client) -> None:

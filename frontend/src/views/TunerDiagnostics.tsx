@@ -2,6 +2,7 @@ import { Bar, BarChart, CartesianGrid, Cell, ResponsiveContainer, Tooltip, XAxis
 import type { SweepParam, SweepPoint } from '../api/types'
 import { Card } from '../components/ui'
 import { fmtNum } from '../lib/format'
+import { queryRefParams } from '../lib/ids'
 import { navigate } from '../lib/route'
 import { fractionBelow } from '../lib/tuner'
 
@@ -85,16 +86,11 @@ export function WorstQueries({
   k: number
   target: number
 }) {
-  const given = point.worst_queries.some((w) => w.id === null)
   const hasCoverage = point.worst_queries.some((w) => w.probe_coverage !== null)
   return (
     <Card
       title={`Worst queries at ${param} ${point.value}`}
-      subtitle={
-        given
-          ? 'Rows of the given query set; open a stored-id query in the Query Explorer to see miss reasons'
-          : 'Open one in the Query Explorer to see why its neighbours were missed'
-      }
+      subtitle="Open one in the Query Explorer to see why its neighbours were missed"
     >
       {point.worst_queries.length === 0 ? (
         <p className="text-sm text-ink-2">No per-query results in this sweep.</p>
@@ -132,20 +128,18 @@ export function WorstQueries({
                   </td>
                 )}
                 <td className="py-1.5 text-right">
-                  {w.id !== null && (
-                    <button
-                      className="rounded-md border border-line px-2 py-0.5 text-xs text-ink-2 hover:text-ink"
-                      onClick={() =>
-                        navigate('query', {
-                          id: String(w.id),
-                          k,
-                          [param === 'nprobe' ? 'nprobe' : 'ef']: point.value,
-                        })
-                      }
-                    >
-                      Explain
-                    </button>
-                  )}
+                  <button
+                    className="rounded-md border border-line px-2 py-0.5 text-xs text-ink-2 hover:text-ink"
+                    onClick={() =>
+                      navigate('query', {
+                        ...queryRefParams(w),
+                        k,
+                        [param === 'nprobe' ? 'nprobe' : 'ef']: point.value,
+                      })
+                    }
+                  >
+                    Explain
+                  </button>
                 </td>
               </tr>
             ))}

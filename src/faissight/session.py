@@ -5,6 +5,7 @@ from __future__ import annotations
 import contextlib
 import hashlib
 import importlib.util
+import logging
 import os
 import threading
 from collections import OrderedDict
@@ -18,7 +19,7 @@ import numpy.typing as npt
 
 from faissight.core import comparison as comparison_mod
 from faissight.core import hnsw as hnsw_mod
-from faissight.core import hnsw_trace, ivf
+from faissight.core import hnsw_trace, ivf, runs
 from faissight.core import pq as pq_mod
 from faissight.core.advice import Suggestion, advise
 from faissight.core.embed import (
@@ -71,6 +72,7 @@ from faissight.core.vectors import (
 )
 
 T = TypeVar("T")
+log = logging.getLogger("faissight")
 ArrayInput = str | os.PathLike[str] | npt.ArrayLike
 _SWEEP_CACHE_BYTES = 64 * 1024 * 1024
 
@@ -98,7 +100,7 @@ def _load_array(value: ArrayInput, name: str, mmap: bool = False) -> np.ndarray[
     return np.asarray(value)
 
 
-def _fmt_bytes(n: int) -> str:
+def fmt_bytes(n: int) -> str:
     value = float(n)
     for unit in ("B", "KiB", "MiB", "GiB"):
         if value < 1024 or unit == "GiB":
@@ -429,12 +431,16 @@ class Session:
         id: int | None = None,
         vector: npt.ArrayLike | None = None,
         text: str | None = None,
+        row: int | None = None,
         k: int = 10,
         nprobe: int | None = None,
         ef_search: int | None = None,
         compare: bool = True,
     ) -> QueryReport:
-        """Resolve, search, and (with ``compare``) explain against exact ground truth."""
+        """Resolve, search, and (with ``compare``) explain against exact ground truth.
+
+        ``row`` is a row of the ``--queries`` set, as numbered by sweeps and comparisons.
+        """
         if self.demo_limits is not None:
             lim = self.demo_limits
             if k > lim.max_k:
@@ -448,6 +454,8 @@ class Session:
             text=text,
             source=self.source if id is not None else None,
             embedder=self.get_embedder() if text is not None else None,
+            row=row,
+            queries=self.queries,
         )
         return explain_query(
             self.li,
@@ -490,7 +498,7 @@ class Session:
 
         def work(progress: Callable[[float, str], None]) -> Projection:
             cache = ProjectionCache(self.index_sha1, self._cache_root) if self._disk_cache else None
-            return compute_projection(
+            proj = compute_projection(
                 self.li,
                 self.source,
                 method=method,
@@ -500,6 +508,9 @@ class Session:
                 cache=cache,
                 progress=progress,
             )
+            if proj.cache_warning:
+                log.warning(proj.cache_warning)
+            return proj
 
         return self.jobs.get_or_start(key, work, retry=retry)
 
@@ -544,7 +555,7 @@ class Session:
         raw = self._raw
 
         def work(progress: Callable[[float, str], None]) -> pq_mod.QuantizationReport:
-            size = _fmt_bytes(self.memory_estimate().reconstruct_bytes)
+            size = fmt_bytes(self.memory_estimate().reconstruct_bytes)
             progress(0.1, f"Decoding stored vectors (about {size} in memory)")
             stored = self._once("reconstructed", lambda: reconstruct_all(self.li))
             progress(0.6, "Measuring error and distortion")
@@ -559,23 +570,26 @@ class Session:
         return self._once("hnsw_graph", lambda: hnsw_mod.extract_graph(self.li))
 
     @property
-    def hnsw_vectors(self) -> npt.NDArray[np.float32]:
-        """Core-space vector of every HNSW node, by internal id."""
-        return self._once("hnsw_vectors", lambda: hnsw_trace.storage_vectors(self.li))
+    def hnsw_vectors(self) -> hnsw_trace.NodeVectors:
+        """Core-space vector of HNSW nodes by internal id, without copying the storage."""
+        return self._once("hnsw_vectors", lambda: hnsw_trace.node_vectors(self.li))
 
-    def hnsw_layout(self) -> npt.NDArray[np.float32]:
-        """2-D position of every HNSW node, from the session's PCA projection."""
+    def hnsw_positions(self, nodes: npt.ArrayLike) -> npt.NDArray[np.float32]:
+        """2-D positions of HNSW nodes (internal ids) in the session's PCA projection.
 
-        def compute() -> npt.NDArray[np.float32]:
-            job = self.projection_job(ProjectionMethod.PCA, 2)
-            job.wait()
-            if job.error is not None:
-                raise job.error
-            assert job.result is not None
-            assert job.result.pca is not None
-            return job.result.pca.transform(self.hnsw_vectors)
-
-        return self._once("hnsw_layout", compute)
+        Only the nodes asked for are projected, so drawing a level or a trace costs memory
+        in proportion to what is drawn, not to the index.
+        """
+        job = self.projection_job(ProjectionMethod.PCA, 2)
+        job.wait()
+        if job.error is not None:
+            raise job.error
+        assert job.result is not None
+        assert job.result.pca is not None
+        ids = np.asarray(nodes, dtype=np.int64)
+        if len(ids) == 0:
+            return np.empty((0, 2), dtype=np.float32)
+        return job.result.pca.transform(self.hnsw_vectors[ids])
 
     def hnsw_trace(
         self, vector: npt.ArrayLike, k: int, ef_search: int | None = None
@@ -597,7 +611,11 @@ class Session:
         return sample_queries(self.source, n_queries, seed)
 
     def _sweep_data(
-        self, n_queries: int, k: int, seed: int
+        self,
+        n_queries: int,
+        k: int,
+        seed: int,
+        progress: Callable[[float, str], None] | None = None,
     ) -> tuple[QuerySet, npt.NDArray[np.int64]]:
         key = (n_queries, k, seed)
         with self._lock:
@@ -605,7 +623,9 @@ class Session:
                 self._sweep_inputs.move_to_end(key)
                 return self._sweep_inputs[key]
         qs = self.sweep_queries(n_queries, seed)
-        truth = ground_truth_ids(self.ground_truth, qs, k)
+        # Ground truth is the first phase of the job: report it without advancing the bar.
+        report = (lambda _f, msg: progress(0.0, msg)) if progress is not None else None
+        truth = ground_truth_ids(self.ground_truth, qs, k, report)
 
         def size(data: tuple[QuerySet, npt.NDArray[np.int64]]) -> int:
             q, t = data
@@ -663,7 +683,7 @@ class Session:
 
         def work(progress: Callable[[float, str], None]) -> SweepResult:
             progress(0.0, "Computing exact ground truth")
-            qs, truth = self._sweep_data(n_queries, k, seed)
+            qs, truth = self._sweep_data(n_queries, k, seed, progress)
             return sweep(
                 self.li,
                 qs,
@@ -694,7 +714,12 @@ class Session:
         return self.jobs.get(key) if key is not None else None
 
     def sweep_advice(
-        self, result: SweepResult, target_recall: float, *, confident: bool = False
+        self,
+        result: SweepResult,
+        target_recall: float,
+        *,
+        confident: bool = False,
+        max_p95_ms: float | None = None,
     ) -> list[Suggestion]:
         """Suggested next steps for a finished sweep of this index."""
         li = self.li
@@ -710,6 +735,27 @@ class Session:
             list_stats=self.list_stats() if li.kind.is_ivf else None,
             max_value=max_value,
             can_compare=bool(self.candidates),
+            max_p95_ms=max_p95_ms,
+        )
+
+    def sweep_run(
+        self,
+        result: SweepResult,
+        target_recall: float,
+        *,
+        confident: bool = False,
+        max_p95_ms: float | None = None,
+        label: str | None = None,
+    ) -> dict[str, Any]:
+        """A saveable record of a finished sweep of this index (see :mod:`core.runs`)."""
+        return runs.run_record(
+            result,
+            self.li,
+            self.index_sha1,
+            target_recall=target_recall,
+            confident=confident,
+            max_p95_ms=max_p95_ms,
+            label=label,
         )
 
     # --- index comparison -----------------------------------------------------------------
@@ -770,7 +816,7 @@ class Session:
 
         def work(progress: Callable[[float, str], None]) -> comparison_mod.ComparisonResult:
             progress(0.0, "Computing exact ground truth")
-            qs, truth = self._sweep_data(n_queries, k, seed)
+            qs, truth = self._sweep_data(n_queries, k, seed, progress)
             return comparison_mod.compare_indexes(
                 self.li,
                 right,

@@ -173,6 +173,8 @@ class ProjectionResponse(BaseModel):
     n_total: int
     sampled: bool
     explained_variance: list[float] | None = None
+    cache_warning: str | None = None
+    """Set when the projection couldn't be saved to the disk cache (it is still valid)."""
 
 
 class ProjectionRef(BaseModel):
@@ -187,12 +189,16 @@ class QueryIn(BaseModel):
     id: UserId | None = None
     vector: list[float] | None = None
     text: str | None = None
+    row: int | None = Field(None, ge=0)
+    """Row of the evaluation query set given with ``--queries`` (as sweeps number them)."""
 
     @model_validator(mode="after")
     def _exactly_one(self) -> QueryIn:
-        given = [k for k in ("id", "vector", "text") if getattr(self, k) is not None]
+        given = [k for k in ("id", "vector", "text", "row") if getattr(self, k) is not None]
         if len(given) != 1:
-            raise ValueError(f"Give exactly one of id, vector or text (got {given or 'none'}).")
+            raise ValueError(
+                f"Give exactly one of id, vector, text or row (got {given or 'none'})."
+            )
         return self
 
 
@@ -237,7 +243,7 @@ class TruthRow(BaseModel):
 
 
 class SearchResponse(BaseModel):
-    query_kind: Literal["id", "vector", "text"]
+    query_kind: Literal["id", "vector", "text", "row"]
     metric: str
     higher_is_closer: bool
     k: int
@@ -356,6 +362,7 @@ class SuggestionOut(BaseModel):
         "RECALL_PLATEAU",
         "FAILING_QUERIES",
         "LIST_IMBALANCE",
+        "LATENCY_BUDGET",
     ]
     title: str
     detail: str
@@ -372,8 +379,53 @@ class SuggestionOut(BaseModel):
 class SweepAdviceResponse(BaseModel):
     target_recall: float
     confident: bool
+    max_p95_ms: float | None = None
     suggestions: list[SuggestionOut]
     """Most important first; empty when nothing needs changing."""
+
+
+class BaselineRequest(BaseModel):
+    target: float = Field(0.95, ge=0.0, le=1.0)
+    confident: bool = False
+    max_p95_ms: float | None = Field(None, gt=0)
+    """The decision the current run is judged by: target recall and optional p95 budget."""
+    baseline: dict[str, Any]
+    """A run saved with ``GET /api/sweep/{job_id}/run`` or ``faissight sweep --save``."""
+    max_recall_drop: float = Field(0.01, ge=0, le=1)
+    """A setting regresses when its recall falls by more than this (absolute)."""
+    max_p95_increase: float = Field(0.2, ge=0)
+    """... or its p95 latency grows by more than this (relative, 0.2 = 20%)..."""
+    min_p95_increase_ms: float = Field(0.05, ge=0)
+    """... and by more than this many milliseconds (sub-ms timings are noisy)."""
+
+
+class PointDeltaOut(BaseModel):
+    value: int
+    baseline_recall: float
+    recall: float
+    recall_change: float
+    baseline_p95_ms: float
+    p95_ms: float
+    p95_change: float
+    recall_regressed: bool
+    latency_regressed: bool
+
+
+class BaselineResponse(BaseModel):
+    baseline_label: str | None
+    baseline_created_at: str | None
+    baseline_index: str | None
+    """File name of the baseline's index, when it had one."""
+    points: list[PointDeltaOut]
+    regressed: bool
+    recall_comparable: bool
+    latency_comparable: bool
+    notes: list[str]
+    baseline_recommended: int | None
+    recommended: int | None
+    max_recall_drop: float
+    max_p95_increase: float
+    min_p95_increase_ms: float
 
 
 # --- comparison --------------------------------------------------------------------------

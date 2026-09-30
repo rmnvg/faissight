@@ -245,11 +245,24 @@ def test_resolve_by_text(synthetic) -> None:
         ({"vector": np.full(D, np.nan)}, "NaN"),
         ({"text": "hi"}, "embedder"),
         ({"text": "hi", "embedder": lambda t: np.zeros(3)}, "Embedder output"),
+        ({"row": 0}, "--queries"),
+        ({"row": 2, "queries": np.zeros((2, D))}, "outside the 2 evaluation queries"),
+        ({"row": -1, "queries": np.zeros((2, D))}, "outside"),
+        ({"row": 0, "queries": np.zeros((2, D + 1))}, "Evaluation query 0"),
+        ({"row": 0, "id": 1, "queries": np.zeros((2, D))}, "exactly one"),
     ],
 )
 def test_resolve_errors(synthetic, kwargs, match) -> None:
     with pytest.raises(S.QueryError, match=match):
         S.resolve_query(load_index(synthetic["flat_l2"]), **kwargs)
+
+
+def test_resolve_by_row(synthetic) -> None:
+    li = load_index(synthetic["flat_l2"])
+    queries = np.random.default_rng(1).standard_normal((3, D)).astype(np.float32)
+    rq = S.resolve_query(li, row=2, queries=queries)
+    assert (rq.kind, rq.row, rq.exclude_id) == (S.QueryKind.ROW, 2, None)
+    np.testing.assert_array_equal(rq.vector, queries[2])
 
 
 def test_resolve_unknown_id(synthetic, data) -> None:

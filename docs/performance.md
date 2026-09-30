@@ -75,4 +75,22 @@ needed for quantization analysis, and for ground truth and maps when `--vectors`
 given. The Overview's Inputs card shows the estimate before anything is decoded, and the
 Quantization view's progress message repeats it.
 
+### HNSW inspection
+
+The HNSW view reads the graph's link arrays and the stored vectors straight from the
+index: flat storage is viewed in place, and SQ/PQ storage is decoded only for the nodes a
+trace or drawn level touches. Degree statistics scan the level in bounded batches, and only
+drawn nodes are projected. Measured with `benchmarks/hnsw_memory.py` (1M × 64,
+`IndexHNSWFlat` M=16, vectors memory-mapped; extra peak physical footprint of one
+operation after loading):
+
+| Operation | Before | After |
+|---|---|---|
+| `GET /api/hnsw/stats` (degree statistics, all levels) | 549 MB | 54 MB |
+| `GET /api/hnsw/graph` (2,000 nodes on level 0) | 639 MB | 61 MB |
+| `POST /api/trace/hnsw` (efSearch 64) | 386 MB | 61 MB |
+
+The PCA layout is fitted on the projection's 50k-point sample. Without `--vectors`, that
+sample comes from decoding the index, which costs the n × d × 4 term above.
+
 For very large indexes, lower `--max-points` to keep the browser light. Projections are cached on disk under `~/.cache/faissight/`, so restarts are fast.

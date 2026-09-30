@@ -1,4 +1,4 @@
-"""Command-line interface: ``faissight serve | info | sweep``."""
+"""Command-line interface: ``faissight serve | info | sweep | compare | demo | cache``."""
 
 from __future__ import annotations
 
@@ -20,14 +20,20 @@ from rich.progress import BarColumn, Progress, SpinnerColumn, TextColumn
 from rich.table import Table
 
 from faissight import __version__
+from faissight.core import runs
 from faissight.core._faiss import FaissNotInstalledError
 from faissight.core.advice import Suggestion
 from faissight.core.loader import IndexLoadError, load_index
-from faissight.core.projection import DEFAULT_MAX_POINTS
-from faissight.core.sweep import SweepPoint, SweepResult
+from faissight.core.projection import (
+    DEFAULT_MAX_POINTS,
+    cache_entries,
+    clear_cache,
+    default_cache_root,
+)
+from faissight.core.sweep import Choice, SweepResult
 from faissight.core.types import LoadedIndex
 from faissight.server.app import create_app
-from faissight.session import InputError, Session
+from faissight.session import InputError, Session, fmt_bytes
 
 app = typer.Typer(
     name="faissight",
@@ -358,6 +364,30 @@ def sweep(
         int, typer.Option(min=0, max=2**32 - 1, help="Query sampling and timing-order seed.")
     ] = 0,
     target: Annotated[float, typer.Option(help="Target recall for the recommendation.")] = 0.95,
+    max_p95_ms: Annotated[
+        float | None,
+        typer.Option(
+            min=0.0,
+            help="Also require p95 latency (single-threaded, per query) within this budget.",
+        ),
+    ] = None,
+    save: Annotated[
+        Path | None, typer.Option(help="Save the run (settings, measurements, identity) here.")
+    ] = None,
+    label: Annotated[str | None, typer.Option(help="A name stored with --save.")] = None,
+    baseline: Annotated[
+        Path | None, typer.Option(help="Compare with a run saved earlier with --save.")
+    ] = None,
+    max_recall_drop: Annotated[
+        float, typer.Option(min=0.0, help="--baseline: allowed recall drop per setting.")
+    ] = 0.01,
+    max_p95_increase: Annotated[
+        float, typer.Option(min=0.0, help="--baseline: allowed p95 growth (0.2 = 20%).")
+    ] = 0.2,
+    min_p95_increase_ms: Annotated[
+        float,
+        typer.Option(min=0.0, help="Ignore p95 growth smaller than this (timing noise)."),
+    ] = 0.05,
     as_json: Annotated[bool, typer.Option("--json", help="Print JSON instead of a table.")] = False,
     mmap: Annotated[
         bool,
@@ -370,9 +400,16 @@ def sweep(
 ) -> None:
     """Measure recall@k and latency across nprobe/efSearch values.
 
-    Exits with code 2 if no value reaches --target, so it can gate CI.
+    Exits with code 2 if no value reaches --target (within --max-p95-ms, if given), and
+    otherwise 3 if --baseline shows a regression, so it can gate CI.
     """
     parsed_values = _values_option(values)
+    base_run = None
+    if baseline is not None:
+        try:
+            base_run = runs.load_run(baseline)
+        except (OSError, runs.RunFormatError) as e:
+            raise _fail(f"Can't read --baseline: {e}") from e
     if param is not None and param not in ("nprobe", "efSearch"):
         raise _fail(f"Unknown --param {param!r}.", "Use nprobe (IVF) or efSearch (HNSW).")
     try:
@@ -404,9 +441,25 @@ def sweep(
         raise _fail(f"Sweep failed: {job.error}")
     result = job.result
     assert result is not None
-    rec = result.recommend(target)
-    fastest = result.fastest(target)
-    suggestions = session.sweep_advice(result, target)
+    choice = result.choose(target, max_p95_ms=max_p95_ms)
+    rec = choice.point
+    fastest = result.fastest(target, max_p95_ms=max_p95_ms)
+    suggestions = session.sweep_advice(result, target, max_p95_ms=max_p95_ms)
+    record = session.sweep_run(result, target, max_p95_ms=max_p95_ms, label=label)
+    if save is not None:
+        runs.save_run(record, save)
+        err_console.print(f"Saved the run to {escape(str(save))}")
+    comparison = (
+        runs.compare_runs(
+            base_run,
+            record,
+            max_recall_drop=max_recall_drop,
+            max_p95_increase=max_p95_increase,
+            min_p95_increase_ms=min_p95_increase_ms,
+        )
+        if base_run is not None
+        else None
+    )
 
     if as_json:
         typer.echo(
@@ -418,6 +471,8 @@ def sweep(
                     "query_origin": result.query_origin,
                     "truth_source": "reconstructed" if result.truth_reconstructed else "raw",
                     "target": target,
+                    "max_p95_ms": max_p95_ms,
+                    "status": choice.status,
                     "repeats": result.repeats,
                     "seed": result.seed,
                     "query_sha256": result.query_sha256,
@@ -427,18 +482,79 @@ def sweep(
                     "fastest_meeting_target": fastest.value if fastest else None,
                     "points": [asdict(p) for p in result.points],
                     "suggestions": [{**asdict(s), "kind": s.kind.value} for s in suggestions],
+                    "baseline": _comparison_json(comparison) if comparison else None,
                 },
                 indent=2,
             )
         )
     else:
-        _print_sweep(result, rec, target)
+        _print_sweep(result, choice, target)
         _print_suggestions(suggestions)
+        if comparison is not None:
+            _print_comparison(comparison, result.param.value)
     if rec is None:
         raise typer.Exit(code=2)
+    if comparison is not None and comparison.regressed:
+        raise typer.Exit(code=3)
 
 
-def _print_sweep(result: SweepResult, rec: SweepPoint | None, target: float) -> None:
+def _comparison_json(cmp: runs.RunComparison) -> dict[str, object]:
+    return {
+        "regressed": cmp.regressed,
+        "recall_comparable": cmp.recall_comparable,
+        "latency_comparable": cmp.latency_comparable,
+        "notes": cmp.notes,
+        "baseline_recommended": cmp.baseline_recommended,
+        "recommended": cmp.recommended,
+        "max_recall_drop": cmp.max_recall_drop,
+        "max_p95_increase": cmp.max_p95_increase,
+        "min_p95_increase_ms": cmp.min_p95_increase_ms,
+        "points": [
+            {**asdict(d), "recall_change": d.recall_change, "p95_change": d.p95_change}
+            for d in cmp.points
+        ],
+    }
+
+
+def _print_comparison(cmp: runs.RunComparison, param: str) -> None:
+    console.print("\n[bold]Against the baseline[/]")
+    for note in cmp.notes:
+        console.print(f"[yellow]•[/] {escape(note)}")
+    if cmp.points:
+        table = Table()
+        table.add_column(param, justify="right")
+        table.add_column("recall (base → now)", justify="right")
+        table.add_column("p95 ms (base → now)", justify="right")
+        table.add_column("")
+        for d in cmp.points:
+            flags = []
+            if d.recall_regressed:
+                flags.append(f"recall {d.recall_change:+.3f}")
+            if d.latency_regressed:
+                flags.append(f"p95 {d.p95_change:+.0%}")
+            table.add_row(
+                str(d.value),
+                f"{d.baseline_recall:.3f} → {d.recall:.3f}",
+                f"{d.baseline_p95_ms:.3f} → {d.p95_ms:.3f}",
+                f"[red]regressed: {', '.join(flags)}[/]" if flags else "ok",
+            )
+        console.print(table)
+    if cmp.baseline_recommended != cmp.recommended:
+        console.print(
+            f"Recommended {param}: {cmp.baseline_recommended} before, {cmp.recommended} now."
+        )
+    if cmp.regressed:
+        console.print(
+            f"[red]Regressed[/]: recall fell by more than {cmp.max_recall_drop:g}, or p95 grew "
+            f"by more than {cmp.max_p95_increase:.0%} and {cmp.min_p95_increase_ms:g} ms, at "
+            f"{len(cmp.regressions)} setting(s)."
+        )
+    elif cmp.points:
+        console.print("[green]No regressions[/] against the baseline.")
+
+
+def _print_sweep(result: SweepResult, choice: Choice, target: float) -> None:
+    rec, budget = choice.point, choice.max_p95_ms
     origin = "given" if result.query_origin == "given" else "sampled stored-vector"
     console.print(
         f"[bold]{result.param.value} sweep[/] · recall@{result.k} over {result.n_queries} "
@@ -471,6 +587,8 @@ def _print_sweep(result: SweepResult, rec: SweepPoint | None, target: float) -> 
             if rec is not None and p.value == rec.value
             else ("meets target" if p.recall >= target else "")
         )
+        if budget is not None and p.latency_p95_ms > budget:
+            mark = f"{mark}, over budget" if mark else "over budget"
         below = p.fraction_below(target)
         coverage = [f"{p.probe_coverage:.3f}" if p.probe_coverage is not None else ""]
         table.add_row(
@@ -488,11 +606,20 @@ def _print_sweep(result: SweepResult, rec: SweepPoint | None, target: float) -> 
             mark,
         )
     console.print(table)
+    name = result.param.value
+    if choice.status == "latency":
+        over = choice.by_recall
+        assert over is not None
+        console.print(
+            f"[red]No value reached recall {target:g} within p95 {budget:g} ms[/]: it first "
+            f"comes at {name}={over.value} with p95 {over.latency_p95_ms:.3f} ms."
+        )
+        return
     if rec is None:
         best = max(result.points, key=lambda p: p.recall)
         console.print(
             f"[red]No value reached recall {target:g}[/] (best {best.recall:.3f} at "
-            f"{result.param.value}={best.value})."
+            f"{name}={best.value})."
         )
         return
     slowest = max(result.points, key=lambda p: p.value)
@@ -506,7 +633,7 @@ def _print_sweep(result: SweepResult, rec: SweepPoint | None, target: float) -> 
         f"Recommended [bold]{result.param.value}={rec.value}[/] (smallest value meeting the "
         f"target): recall {rec.recall:.3f} at {rec.latency_mean_ms:.3f} ms/query{faster}."
     )
-    fastest = result.fastest(target)
+    fastest = result.fastest(target, max_p95_ms=budget)
     if fastest is not None and fastest.value != rec.value:
         console.print(
             f"Fastest measured: {result.param.value}={fastest.value} at "
@@ -674,3 +801,99 @@ def demo(
         compare=None,
         mmap=False,
     )
+
+
+cache_app = typer.Typer(
+    help="Show or clear the projection disk cache (~/.cache/faissight; demo data is kept).",
+    no_args_is_help=True,
+)
+app.add_typer(cache_app, name="cache")
+
+
+@cache_app.command("info")
+def cache_info() -> None:
+    """Where the projection cache is and how much each index uses."""
+    root = default_cache_root()
+    entries = cache_entries(root)
+    console.print(f"Projection cache: [bold]{escape(str(root))}[/]")
+    if not entries:
+        console.print("Empty.")
+        return
+    table = Table()
+    table.add_column("index sha1")
+    table.add_column("files", justify="right")
+    table.add_column("size", justify="right")
+    table.add_column("last used")
+    by_index: dict[str, list[float]] = {}
+    for e in entries:
+        files, size, last = by_index.get(e.index_sha1, [0, 0, 0.0])
+        by_index[e.index_sha1] = [files + 1, size + e.bytes, max(last, e.last_used)]
+    for sha1, (files, size, last) in sorted(by_index.items(), key=lambda kv: -kv[1][2]):
+        table.add_row(
+            sha1[:12],
+            str(int(files)),
+            fmt_bytes(int(size)),
+            time.strftime("%Y-%m-%d %H:%M", time.localtime(last)),
+        )
+    console.print(table)
+    n = len(entries)
+    console.print(f"Total {fmt_bytes(sum(e.bytes for e in entries))} in {n} file{'s' * (n != 1)}.")
+
+
+@cache_app.command("clear")
+def cache_clear(
+    older_than_days: Annotated[
+        float | None, typer.Option(min=0.0, help="Only remove entries unused for this many days.")
+    ] = None,
+    max_mb: Annotated[
+        float | None,
+        typer.Option(min=0.0, help="Remove least recently used entries until the rest fit."),
+    ] = None,
+) -> None:
+    """Delete cached projections (all of them, unless limited). Recomputed when needed."""
+    max_bytes = int(max_mb * 2**20) if max_mb is not None else None
+    removed = clear_cache(older_than_days=older_than_days, max_bytes=max_bytes)
+    freed = sum(e.bytes for e in removed)
+    console.print(f"Removed {len(removed)} cached projections ({fmt_bytes(freed)}).")
+
+
+runs_app = typer.Typer(
+    help="Compare saved sweep runs (faissight sweep --save).", no_args_is_help=True
+)
+app.add_typer(runs_app, name="runs")
+
+
+@runs_app.command("diff")
+def runs_diff(
+    baseline: Annotated[Path, typer.Argument(help="The earlier run.")],
+    current: Annotated[Path, typer.Argument(help="The later run.")],
+    max_recall_drop: Annotated[
+        float, typer.Option(min=0.0, help="Allowed recall drop per setting.")
+    ] = 0.01,
+    max_p95_increase: Annotated[
+        float, typer.Option(min=0.0, help="Allowed p95 growth (0.2 = 20%).")
+    ] = 0.2,
+    min_p95_increase_ms: Annotated[
+        float,
+        typer.Option(min=0.0, help="Ignore p95 growth smaller than this (timing noise)."),
+    ] = 0.05,
+    as_json: Annotated[bool, typer.Option("--json", help="Print JSON instead of a table.")] = False,
+) -> None:
+    """Compare two saved runs setting by setting; exits with code 3 on a regression."""
+    try:
+        base, cur = runs.load_run(baseline), runs.load_run(current)
+    except (OSError, runs.RunFormatError) as e:
+        raise _fail(str(e)) from e
+    cmp = runs.compare_runs(
+        base,
+        cur,
+        max_recall_drop=max_recall_drop,
+        max_p95_increase=max_p95_increase,
+        min_p95_increase_ms=min_p95_increase_ms,
+    )
+    if as_json:
+        typer.echo(json.dumps(_comparison_json(cmp), indent=2))
+    else:
+        _print_comparison(cmp, str(cur["settings"]["param"]))
+    if cmp.regressed:
+        raise typer.Exit(code=3)

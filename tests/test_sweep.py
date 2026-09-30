@@ -365,3 +365,94 @@ def test_sweep_without_assignments_has_no_coverage(ivf_setup, synthetic) -> None
     assert r.coverage_at(1) is None
     assert r.nprobe_for_coverage(0.5) is None
     assert all(p.probe_coverage is None for p in r.points)
+
+
+# --- cancellation checkpoints in untimed work ----------------------------------------------
+
+
+class _Stop(Exception):
+    pass
+
+
+def _stop_after(calls: int):
+    seen = []
+
+    def report(frac, msg):
+        seen.append(msg)
+        if len(seen) > calls:
+            raise _Stop(msg)
+
+    return report, seen
+
+
+def test_ground_truth_checks_in_between_batches(ivf_setup, monkeypatch) -> None:
+    _, _, gt, qs, truth = ivf_setup
+    monkeypatch.setattr(W, "QUERY_BATCH", 16)
+    # Batched and one-shot ground truth agree.
+    np.testing.assert_array_equal(W.ground_truth_ids(gt, qs, K), truth)
+    searched = []
+    original = gt.search_batch
+    monkeypatch.setattr(
+        gt, "search_batch", lambda q, *a: searched.append(len(q)) or original(q, *a)
+    )
+    report, seen = _stop_after(2)
+    with pytest.raises(_Stop):
+        W.ground_truth_ids(gt, qs, K, report)
+    assert searched == [16, 16]  # stopped before the third of four batches
+    assert seen[1] == "Exact ground truth: 16/60 queries"
+
+
+def test_sweep_warm_up_and_probe_ranks_check_in_between_batches(ivf_setup, monkeypatch) -> None:
+    li, _, _, qs, truth = ivf_setup
+    monkeypatch.setattr(W, "QUERY_BATCH", 16)
+    report, seen = _stop_after(6)
+    with pytest.raises(_Stop):
+        W.sweep(
+            li,
+            qs,
+            truth,
+            values=[1, 2],
+            k=K,
+            repeats=1,
+            progress=report,
+            assignments=ivf.assignments(li),
+        )
+    # Four probe-rank batches, then the first warm-up batches of nprobe 1, before timing.
+    assert [m.split(":")[0] for m in seen] == ["Locating true neighbours' lists"] * 4 + [
+        "nprobe=1"
+    ] * 3
+    assert all("warming up" in m for m in seen[4:])
+
+
+# --- latency budget ------------------------------------------------------------------------
+
+
+def _timed(value: int, recall: float, p95: float) -> W.SweepPoint:
+    return W.SweepPoint(value, recall, p95 / 2, p95)
+
+
+def test_choose_under_a_latency_budget() -> None:
+    r = W.SweepResult(
+        W.SweepParam.NPROBE,
+        10,
+        100,
+        "sampled",
+        False,
+        [_timed(1, 0.80, 1.0), _timed(4, 0.93, 3.0), _timed(8, 0.96, 6.0), _timed(16, 0.99, 12.0)],
+    )
+    ok = r.choose(0.95, max_p95_ms=6.0)
+    assert (ok.status, ok.point.value, ok.best_in_budget.value) == ("ok", 8, 8)
+    assert r.recommend(0.95, max_p95_ms=6.0).value == 8
+    # Recall needs nprobe 8, whose p95 is over 5 ms: say so, and what the budget allows.
+    slow = r.choose(0.95, max_p95_ms=5.0)
+    assert (slow.status, slow.point) == ("latency", None)
+    assert (slow.by_recall.value, slow.best_in_budget.value) == (8, 4)
+    assert r.recommend(0.95, max_p95_ms=5.0) is None
+    assert r.fastest(0.95, max_p95_ms=5.0) is None
+    none_fit = r.choose(0.95, max_p95_ms=0.5)
+    assert (none_fit.status, none_fit.best_in_budget) == ("latency", None)
+    unreachable = r.choose(0.999, max_p95_ms=100.0)
+    assert (unreachable.status, unreachable.by_recall) == ("recall", None)
+    assert unreachable.best_in_budget.value == 16
+    # Without a budget, choose() is recommend().
+    assert r.choose(0.95).point == r.recommend(0.95)

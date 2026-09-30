@@ -25,6 +25,7 @@ def _run_query(session: Session, req: S.SearchRequest, force_compare: bool = Fal
         id=q.id,
         vector=q.vector,
         text=q.text,
+        row=q.row,
         k=req.k,
         nprobe=req.nprobe,
         ef_search=req.ef_search,

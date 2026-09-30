@@ -6,9 +6,11 @@ is where IVF centroids live and where the index actually compares vectors.
 
 from __future__ import annotations
 
+import contextlib
 import hashlib
 import os
 import tempfile
+import time
 import warnings
 from collections.abc import Callable
 from dataclasses import dataclass, replace
@@ -162,6 +164,8 @@ class Projection:
     n_total: int
     """Number of stored vectors before sampling."""
     pca: PcaModel | None = None
+    cache_warning: str | None = None
+    """Why this projection couldn't be written to the disk cache (it is still valid)."""
 
     @property
     def sampled(self) -> bool:
@@ -272,7 +276,16 @@ def compute_projection(
         pca=pca,
     )
     if cache is not None and key is not None:
-        cache.save(key, proj)
+        try:
+            cache.save(key, proj)
+        except OSError as e:
+            # The cache only saves time: a read-only or full disk mustn't lose the result.
+            reason = e.strerror or type(e).__name__
+            proj = replace(
+                proj,
+                cache_warning=f"Couldn't save to the projection cache in {cache.dir} "
+                f"({reason}); it will be recomputed next time.",
+            )
     report(1.0, "Done")
     return proj
 
@@ -363,6 +376,14 @@ class ProjectionCache:
         return self.dir / f"{key}.npz"
 
     def load(self, key: str) -> Projection | None:
+        proj = self._read(key)
+        if proj is not None:
+            # Mark the entry as used, so size-based cleanup evicts least recently used first.
+            with contextlib.suppress(OSError):
+                os.utime(self.path(key))
+        return proj
+
+    def _read(self, key: str) -> Projection | None:
         path = self.path(key)
         if not path.is_file():
             return None
@@ -411,3 +432,81 @@ class ProjectionCache:
         except BaseException:
             Path(tmp).unlink(missing_ok=True)
             raise
+
+
+# --- cache usage and cleanup -------------------------------------------------------------
+
+
+def _is_index_dir(path: Path) -> bool:
+    """Per-index cache folders are named by the index's sha1 (other data, e.g. the demo's,
+    lives beside them and is never touched)."""
+    name = path.name
+    return path.is_dir() and len(name) == 40 and all(c in "0123456789abcdef" for c in name)
+
+
+@dataclass(frozen=True)
+class CacheEntry:
+    """One cached file."""
+
+    index_sha1: str
+    path: Path
+    bytes: int
+    last_used: float
+    """Modification time, refreshed on every cache hit (seconds since the epoch)."""
+
+
+def cache_entries(root: Path | None = None) -> list[CacheEntry]:
+    """Every projection cache file under ``root`` (default: :func:`default_cache_root`),
+    least recently used first. Includes leftovers from interrupted writes."""
+    base = root or default_cache_root()
+    out: list[CacheEntry] = []
+    if not base.is_dir():
+        return out
+    for d in base.iterdir():
+        if not _is_index_dir(d):
+            continue
+        for f in d.iterdir():
+            if f.is_file() and (f.suffix == ".npz" or f.name.endswith(".npz.tmp")):
+                with contextlib.suppress(OSError):
+                    st = f.stat()
+                    out.append(CacheEntry(d.name, f, st.st_size, st.st_mtime))
+    return sorted(out, key=lambda e: (e.last_used, str(e.path)))
+
+
+def clear_cache(
+    root: Path | None = None,
+    *,
+    older_than_days: float | None = None,
+    max_bytes: int | None = None,
+    now: float | None = None,
+) -> list[CacheEntry]:
+    """Delete projection cache files; returns what was removed.
+
+    With neither limit, everything goes. ``older_than_days`` removes entries not used for
+    that long; ``max_bytes`` then removes least recently used entries until the rest fit.
+    Empty per-index folders are removed too.
+    """
+    entries = cache_entries(root)
+    now = time.time() if now is None else now
+    if older_than_days is None and max_bytes is None:
+        doomed = list(entries)
+    else:
+        cutoff = now - older_than_days * 86400 if older_than_days is not None else None
+        doomed = [e for e in entries if cutoff is not None and e.last_used < cutoff]
+        if max_bytes is not None:
+            kept = [e for e in entries if e not in doomed]
+            total = sum(e.bytes for e in kept)
+            for e in kept:  # least recently used first
+                if total <= max_bytes:
+                    break
+                doomed.append(e)
+                total -= e.bytes
+    removed = []
+    for e in doomed:
+        with contextlib.suppress(OSError):
+            e.path.unlink()
+            removed.append(e)
+    for d in {e.path.parent for e in removed}:
+        with contextlib.suppress(OSError):
+            d.rmdir()  # only if now empty
+    return removed
