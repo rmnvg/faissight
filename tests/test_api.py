@@ -901,6 +901,25 @@ def test_demo_hnsw_ef_cap(synthetic, tmp_path) -> None:
     _assert_error(client.post("/api/sweep", json={"values": [16, 4096]}), 403, "DEMO_LIMIT")
 
 
+def test_internal_error_hides_details_in_demo_mode(demo_client, ivf_client, monkeypatch) -> None:
+    # An unhandled exception must not leak its message to a public demo's clients, but
+    # should still say enough locally to debug from. Both cases keep the full traceback in
+    # the server log (not asserted here; that's the point of logging it).
+    def boom(self, *a, **kw):
+        raise RuntimeError("secret internal detail")
+
+    monkeypatch.setattr(Session, "query", boom)
+    client, _ = demo_client
+    payload = {"query": {"id": 1}, "k": 10}
+
+    demo_body = _assert_error(client.post("/api/search", json=payload), 500, "INTERNAL_ERROR")
+    assert "secret internal detail" not in demo_body["message"]
+    assert "ref" in demo_body["message"]
+
+    local_body = _assert_error(ivf_client.post("/api/search", json=payload), 500, "INTERNAL_ERROR")
+    assert "secret internal detail" in local_body["message"]
+
+
 @pytest.mark.parametrize("kind", ["ivf", "hnsw"])
 def test_int64_ids_remain_exact_across_api(kind) -> None:
     x = np.random.default_rng(4).normal(size=(200, 8)).astype(np.float32)

@@ -31,9 +31,14 @@ export function useQueryRunner(info: Info, params: URLSearchParams) {
   const [idInput, setIdInput] = useState(urlId !== null ? String(urlId) : '')
   const [rowInput, setRowInput] = useState(urlRow !== null ? String(urlRow) : '')
   const [vectorInput, setVectorInput] = useState('')
-  const [k, setK] = useState(intParam(params, 'k') ?? 10)
-  const [nprobe, setNprobe] = useState(intParam(params, 'nprobe') ?? Number(info.params.nprobe ?? 1))
-  const [efSearch, setEfSearch] = useState(intParam(params, 'ef') ?? Number(info.params.ef_search ?? 16))
+  // Stable fallbacks for a URL that omits these: not the current form state, which drifts
+  // as the user runs searches and would make the same shared link reproduce differently.
+  const K_DEFAULT = 10
+  const nprobeDefault = Number(info.params.nprobe ?? 1)
+  const efSearchDefault = Number(info.params.ef_search ?? 16)
+  const [k, setK] = useState(intParam(params, 'k') ?? K_DEFAULT)
+  const [nprobe, setNprobe] = useState(intParam(params, 'nprobe') ?? nprobeDefault)
+  const [efSearch, setEfSearch] = useState(intParam(params, 'ef') ?? efSearchDefault)
   const [compare, setCompare] = useState(true)
   const [formError, setFormError] = useState<string | null>(null)
 
@@ -118,9 +123,9 @@ export function useQueryRunner(info: Info, params: URLSearchParams) {
   useEffect(() => {
     if ((urlId === null && urlRow === null && !urlText) || autoRan.current === urlKey) return
     autoRan.current = urlKey
-    const urlK = intParam(params, 'k') ?? k
-    const urlNprobe = intParam(params, 'nprobe') ?? nprobe
-    const urlEf = intParam(params, 'ef') ?? efSearch
+    const urlK = intParam(params, 'k') ?? K_DEFAULT
+    const urlNprobe = intParam(params, 'nprobe') ?? nprobeDefault
+    const urlEf = intParam(params, 'ef') ?? efSearchDefault
     const urlCompare = params.get('compare') !== '0'
     setQueryMode(urlId !== null ? 'id' : urlRow !== null ? 'row' : 'text')
     if (urlId !== null) setIdInput(String(urlId))

@@ -38,6 +38,21 @@ def test_search_ivf_uses_params_without_mutating(synthetic, data) -> None:
     np.testing.assert_array_equal(r.ids, expected[0])
 
 
+def test_search_ivf_preserves_max_codes(synthetic, data) -> None:
+    # Regression: SearchParametersIVF(nprobe=...) used to reset max_codes to "unlimited",
+    # so a caller-set scan cap was silently ignored and results diverged from native FAISS.
+    li = load_index(synthetic["ivf_flat"])
+    li.ivf.max_codes = 5
+    r = S.search(li, data["queries"][0], 10, nprobe=NLIST)
+    li.ivf.nprobe = NLIST
+    _, capped = li.index.search(data["queries"][:1], 10)
+    np.testing.assert_array_equal(r.ids, capped[0])
+    # Sanity: the cap is small enough to actually change the result, so this isn't vacuous.
+    li.ivf.max_codes = 0
+    _, uncapped = li.index.search(data["queries"][:1], 10)
+    assert not np.array_equal(capped[0], uncapped[0])
+
+
 def test_search_defaults_to_index_params(synthetic, data) -> None:
     li = load_index(synthetic["ivf_flat"])
     assert S.search(li, data["queries"][0], 5).params == {"nprobe": 1}
@@ -127,6 +142,32 @@ def test_search_bad_inputs(synthetic) -> None:
         S.search(li, np.zeros(D), 0)
     with pytest.raises(ValueError, match="Cannot search"):
         S.search(load_index(faiss.IndexLSH(8, 16)), np.zeros(8), 5)
+
+
+def test_search_rejects_nonfinite(synthetic) -> None:
+    # A direct core.search() call must reject NaN/Inf like resolve_query() does, rather
+    # than silently returning whatever FAISS makes of it.
+    li = load_index(synthetic["flat_l2"])
+    q = np.zeros(D, dtype=np.float32)
+    q[0] = np.nan
+    with pytest.raises(ValueError, match="NaN or infinite"):
+        S.search(li, q, 5)
+    q[0] = np.inf
+    with pytest.raises(ValueError, match="NaN or infinite"):
+        S.search(li, q, 5)
+
+
+def test_ground_truth_rejects_nonfinite(synthetic, data) -> None:
+    li = load_index(synthetic["flat_l2"])
+    gt = S.GroundTruth(V.from_arrays(li, data["x"]), li.metric)
+    q = np.zeros(D, dtype=np.float32)
+    q[0] = np.inf
+    with pytest.raises(ValueError, match="NaN or infinite"):
+        gt.search(q, 5)
+    batch = np.zeros((2, D), dtype=np.float32)
+    batch[1, 0] = np.nan
+    with pytest.raises(ValueError, match="NaN or infinite"):
+        gt.search_batch(batch, 5)
 
 
 # --- ground truth & recall -----------------------------------------------------
