@@ -107,7 +107,9 @@ def test_recall_drop_and_latency_growth_regress(record) -> None:
 
 
 def test_incomparable_runs_say_why(record) -> None:
-    other_machine = _changed(record, p95=3.0, environment={"machine": "x86_64"})
+    # Derived from the recorded value, so it differs on any CI runner or laptop.
+    machine = f"not-{record['environment']['machine']}"
+    other_machine = _changed(record, p95=3.0, environment={"machine": machine})
     cmp = R.compare_runs(record, other_machine)
     assert not cmp.latency_comparable
     assert not cmp.regressed  # latency from another machine isn't judged
