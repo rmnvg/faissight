@@ -565,23 +565,26 @@ class Session:
         return self._once("hnsw_graph", lambda: hnsw_mod.extract_graph(self.li))
 
     @property
-    def hnsw_vectors(self) -> npt.NDArray[np.float32]:
-        """Core-space vector of every HNSW node, by internal id."""
-        return self._once("hnsw_vectors", lambda: hnsw_trace.storage_vectors(self.li))
+    def hnsw_vectors(self) -> hnsw_trace.NodeVectors:
+        """Core-space vector of HNSW nodes by internal id, without copying the storage."""
+        return self._once("hnsw_vectors", lambda: hnsw_trace.node_vectors(self.li))
 
-    def hnsw_layout(self) -> npt.NDArray[np.float32]:
-        """2-D position of every HNSW node, from the session's PCA projection."""
+    def hnsw_positions(self, nodes: npt.ArrayLike) -> npt.NDArray[np.float32]:
+        """2-D positions of HNSW nodes (internal ids) in the session's PCA projection.
 
-        def compute() -> npt.NDArray[np.float32]:
-            job = self.projection_job(ProjectionMethod.PCA, 2)
-            job.wait()
-            if job.error is not None:
-                raise job.error
-            assert job.result is not None
-            assert job.result.pca is not None
-            return job.result.pca.transform(self.hnsw_vectors)
-
-        return self._once("hnsw_layout", compute)
+        Only the nodes asked for are projected, so drawing a level or a trace costs memory
+        in proportion to what is drawn, not to the index.
+        """
+        job = self.projection_job(ProjectionMethod.PCA, 2)
+        job.wait()
+        if job.error is not None:
+            raise job.error
+        assert job.result is not None
+        assert job.result.pca is not None
+        ids = np.asarray(nodes, dtype=np.int64)
+        if len(ids) == 0:
+            return np.empty((0, 2), dtype=np.float32)
+        return job.result.pca.transform(self.hnsw_vectors[ids])
 
     def hnsw_trace(
         self, vector: npt.ArrayLike, k: int, ef_search: int | None = None

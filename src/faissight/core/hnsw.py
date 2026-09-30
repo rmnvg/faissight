@@ -6,7 +6,8 @@ Node ids here are internal HNSW offsets (0..ntotal-1); map them with
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
+from typing import Any
 
 import numpy as np
 import numpy.typing as npt
@@ -15,6 +16,10 @@ from faissight.core._faiss import import_faiss
 from faissight.core.types import LoadedIndex
 
 IntArray = npt.NDArray[np.int64]
+
+
+# Link-slot cells gathered per batch when scanning a whole level (x 8 bytes per index).
+_BATCH_CELLS = 1 << 21
 
 
 class NotAnHnswIndexError(ValueError):
@@ -34,6 +39,8 @@ class HnswGraph:
     """Within a node's slice, level ``l`` spans ``[cum[l], cum[l + 1])``; ``-1`` pads."""
     entry_point: int
     max_level: int
+    _owner: Any = field(default=None, repr=False, compare=False)
+    """The FAISS index whose memory ``offsets``/``neighbors`` borrow, kept alive with them."""
 
     @property
     def ntotal(self) -> int:
@@ -54,11 +61,19 @@ class HnswGraph:
         return np.flatnonzero(self.node_levels >= level).astype(np.int64)
 
     def degrees(self, level: int) -> IntArray:
-        """Out-degree of every node present on ``level``."""
+        """Out-degree of every node present on ``level``.
+
+        Works through the nodes in batches, so the temporary (nodes x link slots) index
+        stays bounded (about 16 MB) however large the graph is.
+        """
         nodes = self.nodes_at_level(level)
         lo, hi = int(self.cum_per_level[level]), int(self.cum_per_level[level + 1])
-        idx = self.offsets[nodes][:, None] + np.arange(lo, hi)[None, :]
-        deg: IntArray = (self.neighbors[idx] >= 0).sum(axis=1).astype(np.int64)
+        slots = np.arange(lo, hi)
+        deg = np.empty(len(nodes), dtype=np.int64)
+        step = max(1, _BATCH_CELLS // max(hi - lo, 1))
+        for start in range(0, len(nodes), step):
+            idx = self.offsets[nodes[start : start + step]][:, None] + slots[None, :]
+            deg[start : start + step] = (self.neighbors[idx] >= 0).sum(axis=1)
         return deg
 
     def edges(self, level: int, nodes: npt.ArrayLike | None = None) -> tuple[IntArray, IntArray]:
@@ -83,12 +98,23 @@ def extract_graph(li: LoadedIndex) -> HnswGraph:
     h = li.core.hnsw
     return HnswGraph(
         node_levels=faiss.vector_to_array(h.levels).astype(np.int64) - 1,
-        offsets=faiss.vector_to_array(h.offsets).astype(np.int64),
-        neighbors=faiss.vector_to_array(h.neighbors).astype(np.int32),
+        # The link arrays are as large as the graph: borrow them read-only, don't copy.
+        offsets=_borrow(faiss, h.offsets, np.int64),
+        neighbors=_borrow(faiss, h.neighbors, np.int32),
         cum_per_level=faiss.vector_to_array(h.cum_nneighbor_per_level).astype(np.int64),
         entry_point=int(h.entry_point),
         max_level=int(h.max_level),
+        _owner=li.index,
     )
+
+
+def _borrow(faiss: Any, vec: Any, dtype: type[np.generic]) -> npt.NDArray[Any]:
+    """A read-only numpy view of a FAISS ``std::vector`` (same item size as ``dtype``)."""
+    if vec.size() == 0:
+        return np.empty(0, dtype=dtype)
+    arr: npt.NDArray[Any] = faiss.rev_swig_ptr(vec.data(), vec.size()).view(dtype)
+    arr.flags.writeable = False
+    return arr
 
 
 @dataclass(frozen=True)

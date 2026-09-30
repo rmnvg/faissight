@@ -180,3 +180,26 @@ def test_trace_empty_graph_is_a_clear_error() -> None:
     g = H.extract_graph(li)
     with pytest.raises(ValueError, match="empty"):
         T.trace_search(g, np.empty((0, 4), dtype=np.float32), np.zeros(4), 5, 16)
+
+
+# --- node vectors without copying the storage ---------------------------------------------
+
+
+@pytest.mark.parametrize("spec", ["HNSW8", "HNSW8_SQ8", "HNSW8_PQ4"])
+def test_node_vectors_match_storage_vectors(spec) -> None:
+    x = np.random.default_rng(0).standard_normal((300, 16)).astype(np.float32)
+    index = faiss.index_factory(16, spec)
+    index.train(x)
+    index.add(x)
+    li = load_index(index)
+    full = T.storage_vectors(li)
+    lazy = T.node_vectors(li)
+    assert len(lazy) == len(full)
+    nodes = np.array([5, 0, 299, 5])
+    np.testing.assert_array_equal(np.asarray(lazy[nodes]), full[nodes])
+    # Flat storage is a view of the index's own memory, not a copy.
+    assert isinstance(lazy, np.ndarray) == (spec == "HNSW8")
+    g = H.extract_graph(li)
+    a = T.trace_search(g, lazy, x[7] + 0.1, 5, 16)
+    b = T.trace_search(g, full, x[7] + 0.1, 5, 16)
+    np.testing.assert_array_equal(a.results, b.results)

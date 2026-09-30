@@ -43,6 +43,9 @@ All notable changes to faissight are documented here. The format follows
 
 ### Fixed
 
+- HNSW inspection no longer copies the graph or the stored vectors: stats, level views and
+  traces on a 1M-vector index peak at about 60 MB extra instead of 390–640 MB. Only drawn
+  nodes are projected, and SQ/PQ storage is decoded per node (`benchmarks/hnsw_memory.py`).
 - Restarting a cancelled or failed sweep or comparison with the same settings now shows the
   new run; before, the reused job id kept the old status on screen and polling never resumed.
 - Sweep and comparison links carry their settings, and a job the server no longer has (expired
