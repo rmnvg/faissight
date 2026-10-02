@@ -83,6 +83,11 @@ export function ShareBar({ result }: { result: RunResult }) {
       <button className={button} onClick={() => downloadCSV(`faissight-${stamp}-results.csv`, result.search.results as never)}>
         Results CSV
       </button>
+      {result.search.reranked && (
+        <button className={button} onClick={() => downloadCSV(`faissight-${stamp}-reranked.csv`, result.search.reranked as never)}>
+          Reranked CSV
+        </button>
+      )}
       {result.search.truth && (
         <button className={button} onClick={() => downloadCSV(`faissight-${stamp}-truth.csv`, result.search.truth as never)}>
           Ground truth CSV

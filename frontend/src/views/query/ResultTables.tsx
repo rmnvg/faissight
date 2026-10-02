@@ -3,9 +3,9 @@ import { Card, ReasonBadge, SnippetText } from '../../components/ui'
 import { fmtDist } from '../../lib/format'
 import { navigate } from '../../lib/route'
 
-export function ResultsTable({ result }: { result: SearchResponse }) {
+export function ResultsTable({ result, title = 'Approximate results', reranked = false }: { result: SearchResponse; title?: string; reranked?: boolean }) {
   return (
-    <Card title="Approximate results" subtitle={`What the index returned (${result.metric}, ${result.higher_is_closer ? 'higher' : 'lower'} = closer)`}>
+    <Card title={title} subtitle={`${reranked ? 'Exact distances within the candidate set' : 'What the index returned'} (${result.metric}, ${result.higher_is_closer ? 'higher' : 'lower'} = closer)`}>
       <div className="overflow-auto">
         <table className="w-full text-sm">
           <thead className="text-left text-xs text-muted">

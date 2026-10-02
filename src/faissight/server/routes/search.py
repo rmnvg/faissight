@@ -30,6 +30,7 @@ def _run_query(session: Session, req: S.SearchRequest, force_compare: bool = Fal
         nprobe=req.nprobe,
         ef_search=req.ef_search,
         compare=req.compare or force_compare,
+        candidates=req.candidates,
     )
 
 
@@ -94,6 +95,23 @@ def search(req: S.SearchRequest, session: SupportedDep) -> S.SearchResponse:
         params=r.params,
         latency_ms=r.latency_ms,
         results=results,
+        reranked=[
+            S.ResultRow(
+                rank=rank,
+                id=int(i),
+                distance=float(d),
+                in_truth=int(i) in truth_ids if truth_ids is not None else None,
+                snippet=snippet(session, int(i)),
+            )
+            for rank, (i, d) in enumerate(
+                zip(report.reranked.ids, report.reranked.distances, strict=True)
+            )
+        ]
+        if report.reranked is not None
+        else None,
+        reranked_recall=report.reranked_recall,
+        reranked_latency_ms=report.reranked.latency_ms if report.reranked else None,
+        candidate_count=report.candidate_count,
         truth=_truth_rows(session, report, trace.neighbours if trace else None),
         recall=report.recall,
         truth_source=truth_source(session) if report.truth is not None else None,

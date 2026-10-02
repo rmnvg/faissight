@@ -138,6 +138,12 @@ export function QueryForm({ info, runner }: { info: Info; runner: QueryRunner })
             />
             Compare with exact
           </label>
+          {info.inputs.raw_vectors && (
+            <Field label="Rerank candidates (0 = off)" className="w-48">
+              <NumberInput value={f.candidates} onChange={f.setCandidates} min={0}
+                max={info.demo_limits?.max_k ?? 10000} />
+            </Field>
+          )}
           <button
             type="submit"
             disabled={run.isPending}

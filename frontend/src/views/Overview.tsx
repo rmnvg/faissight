@@ -15,7 +15,7 @@ import { Banner, Card, RetryButton, Spinner, StatTile } from '../components/ui'
 import { hasQuantization } from '../lib/capabilities'
 import { fmtBytes } from '../lib/compare'
 import { fmtNum } from '../lib/format'
-import { navigate } from '../lib/route'
+import { Diagnosis } from './Diagnosis'
 
 const IVF_KINDS = new Set(['IVF_FLAT', 'IVF_PQ', 'IVF_SQ'])
 
@@ -110,6 +110,7 @@ export function Overview({ info }: { info: Info }) {
       )}
 
       <InputsCard info={info} />
+      {info.supported && info.ntotal > 0 && <Diagnosis info={info} />}
     </div>
   )
 }
@@ -215,10 +216,9 @@ function IvfHealth({ lists, ntotal }: { lists: ListSizes; ntotal: number }) {
                 {lists.top_lists.map((t) => (
                   <tr
                     key={t.list_no}
-                    onClick={() => navigate('map', { list: t.list_no })}
-                    className="cursor-pointer border-t border-line hover:bg-surface-2"
+                    className="border-t border-line hover:bg-surface-2"
                   >
-                    <td className="tabular py-1.5 text-ink">#{t.list_no}</td>
+                    <td className="tabular py-1.5 text-ink"><a className="underline focus-visible:outline focus-visible:outline-2" href={`#/map?list=${t.list_no}`} aria-label={`Inspect list ${t.list_no}`}>#{t.list_no}</a></td>
                     <td className="tabular py-1.5 text-right text-ink">{fmtNum(t.size)}</td>
                     <td className="py-1.5 pl-3">
                       <div className="flex items-center gap-2">
@@ -280,6 +280,9 @@ function InputsCard({ info }: { info: Info }) {
     ['Raw vectors', rawText],
     ...(m.mmap_note ? [['Memory map', `not applied: ${m.mmap_note}`] as [string, string]] : []),
     ['Decoded vectors', decodedText],
+    ...(hasQuantization(info) && m.pq_workspace_bytes !== undefined
+      ? [['Quantization workspace', `about ${fmtBytes(m.pq_workspace_bytes)} extra for NumPy analysis; excludes decoding, FAISS scratch and report serialization`] as [string, string]]
+      : []),
     [
       'Metadata',
       i.metadata_rows === null

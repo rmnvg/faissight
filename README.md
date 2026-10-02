@@ -93,6 +93,43 @@ report.recall, report.ivf_trace.min_nprobe_for_all
 Without raw vectors, faissight reconstructs them from the index; the UI then warns that
 ground truth is computed on reconstructed vectors, so PQ/SQ error isn't measured.
 
+## Labelled relevance and reranking
+
+Use held-out query vectors and human relevance judgements to measure whether retrieved
+chunks answer the question. Create a JSONL file with one entry per query row:
+
+```json
+{"row": 0, "relevant": {"42": 2, "77": 1}}
+{"row": 1, "relevant": {"105": 1}}
+```
+
+Chunk ids are decimal strings; grades are finite non-negative numbers. Every query needs
+at least one positive judgement, and every labelled chunk must exist in the corpus.
+Unjudged chunks count as non-relevant. Recall@k uses all positively labelled chunks as its
+denominator; MRR@k uses the first relevant hit; nDCG@k uses **linear graded gains**.
+The summary is the arithmetic mean across queries, so each query has equal weight.
+Incomplete judgements can underestimate relevance. These metrics are separate from ANN recall.
+
+```bash
+faissight evaluate index.faiss --vectors vectors.npy --queries queries.npy \
+  --labels judgements.jsonl --k 10 --candidates 100 --mmap --json > relevance.json
+```
+
+`--candidates` additionally retrieves a larger candidate pool and reranks it using exact
+raw-vector distances. JSON includes both sets of metrics and per-query results; ids are
+strings to preserve int64 precision. Timings are single-query observations, not benchmark
+estimates. The Python equivalents are `core.load_judgements`, `core.evaluate_relevance`,
+and `core.relevance_metrics`.
+
+In **Query explorer**, set **Rerank candidates** to at least k to compare the original
+search with candidate retrieval plus exact reranking. Raw vectors are required. The
+experiment shows both result tables, recall and latency; settings survive shared links,
+and results can be exported. Reranking cannot recover neighbours outside the candidate set.
+Python users can call `viewer.session.query(id=42, k=10, candidates=100)`.
+
+The Overview's **Diagnose my index** guide connects input checks, representative queries,
+tuning, and baseline verification.
+
 ## Supported indexes
 
 | Index | Support |
@@ -256,8 +293,7 @@ beyond `--max-mb`. It never touches the demo data. `serve --no-cache` skips the 
 ## Roadmap
 
 - IVF-HNSW (HNSW coarse quantizer) and IVF FastScan support
-- Bring the CLI/Python index comparison into a side-by-side web view
-- Evaluation with labelled query→relevant-chunk pairs (retrieval relevance, not just ANN recall)
+- Web interface for labelled relevance evaluation (available now in CLI/Python)
 - Load FAISS stores directly from LangChain / LlamaIndex save folders
 - VS Code extension
 

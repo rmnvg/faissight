@@ -94,3 +94,20 @@ The PCA layout is fitted on the projection's 50k-point sample. Without `--vector
 sample comes from decoding the index, which costs the n × d × 4 term above.
 
 For very large indexes, lower `--max-points` to keep the browser light. Projections are cached on disk under `~/.cache/faissight/`, so restarts are fast.
+
+### Quantization analysis workspace
+
+Reconstruction errors are computed in batches with roughly 8 MiB of float64 work arrays,
+plus two float64 outputs per vector (16 × n bytes). Distance-distortion sampling uses
+`faiss.knn` directly over the raw vectors, avoiding a second full-corpus IndexFlat copy.
+The Overview reports an approximate NumPy workspace estimate including the sampled pairs;
+this excludes FAISS scratch buffers, allocator overhead and report serialization.
+
+Analysis still reconstructs and retains the stored vectors (n × d × 4 plus ids), separately
+reported in Inputs. `--mmap` applies to raw vectors; it does not remove this decoding cost.
+
+A focused local benchmark (`python benchmarks/pq_memory.py previous` versus `batched`,
+separate processes, 100,000 × 128 float32 vectors) measured peak RSS of **432 MiB before**
+and **149 MiB after**, with identical mean squared reconstruction error. This measures only
+reconstruction-error calculation, including both input arrays and Python overhead, not the
+complete quantization job.

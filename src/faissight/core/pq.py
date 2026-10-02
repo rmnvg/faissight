@@ -25,6 +25,15 @@ FloatArray = npt.NDArray[np.float32]
 F64 = npt.NDArray[np.float64]
 
 
+def workspace_bytes(n: int, d: int) -> int:
+    """Approximate NumPy workspace for default analysis, excluding decoded vectors.
+
+    Per-vector outputs plus the larger of error batches and 4,000 sampled pairs.
+    FAISS scratch buffers, allocator overhead and report serialization are excluded.
+    """
+    return 16 * n + max(min(n * d * 16, 8 * 1024**2), min(n, 100) * min(n, 40) * d * 40)
+
+
 class RawVectorsRequiredError(ValueError):
     """Quantization error can't be measured without the raw vectors."""
 
@@ -40,11 +49,21 @@ def reconstruction_errors(raw: VectorSource, stored: VectorSource) -> tuple[F64,
     """
     if not np.array_equal(raw.ids, stored.ids):
         raise ValueError("Raw and stored vectors don't cover the same ids.")
-    x = raw.vectors.astype(np.float64)
-    diff = x - stored.vectors.astype(np.float64)
-    err = np.einsum("ij,ij->i", diff, diff)
-    norm = np.einsum("ij,ij->i", x, x)
-    rel = np.divide(err, norm, out=np.zeros_like(err), where=norm > 0)
+    if raw.vectors.shape != stored.vectors.shape:
+        raise ValueError("Raw and stored vectors must have the same shape.")
+    err = np.empty(len(raw), dtype=np.float64)
+    rel = np.zeros(len(raw), dtype=np.float64)
+    # Two float64 work arrays, bounded to approximately 8 MiB together.
+    batch = max(1, (8 * 1024**2) // (16 * max(raw.vectors.shape[1], 1)))
+    for start in range(0, len(raw), batch):
+        stop = min(start + batch, len(raw))
+        x = raw.vectors[start:stop].astype(np.float64)
+        diff = stored.vectors[start:stop].astype(np.float64)
+        diff -= x
+        err[start:stop] = np.einsum("ij,ij->i", diff, diff)
+        norm = np.einsum("ij,ij->i", x, x)
+        np.divide(err[start:stop], norm, out=rel[start:stop], where=norm > 0)
+        del x, diff, norm
     return err, rel
 
 
@@ -84,11 +103,12 @@ def distance_distortion(
         raise ValueError("Distance distortion needs at least one stored vector.")
     q_rows = rng.choice(n, size=min(n_queries, n), replace=False)
     queries = raw.vectors[q_rows]
-    flat = faiss.IndexFlat(
-        raw.vectors.shape[1], faiss.METRIC_INNER_PRODUCT if metric is Metric.IP else faiss.METRIC_L2
+    _, near_rows = faiss.knn(
+        queries,
+        raw.vectors,
+        min(n_near + 1, n),
+        metric=faiss.METRIC_INNER_PRODUCT if metric is Metric.IP else faiss.METRIC_L2,
     )
-    flat.add(raw.vectors)
-    _, near_rows = flat.search(queries, min(n_near + 1, n))
     pairs_q, pairs_t, near = [], [], []
     for qi, found in enumerate(near_rows):
         nn = found[(found >= 0) & (found != q_rows[qi])][:n_near]
