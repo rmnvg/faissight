@@ -58,6 +58,7 @@ class MemoryOut(BaseModel):
     maps without --vectors)."""
     reconstructed: bool
     """The decoded vectors are already in memory."""
+    pq_workspace_bytes: int
 
 
 class SweepDefaults(BaseModel):
@@ -210,6 +211,7 @@ class SearchRequest(BaseModel):
     nprobe: int | None = Field(None, ge=1)
     ef_search: int | None = Field(None, ge=1, alias="efSearch")
     compare: bool = True
+    candidates: int | None = Field(None, ge=1, le=10000)
     trace: bool = False
     """On an IVF index, also return the probe trace (saves a second /trace/ivf round trip)."""
     projection: ProjectionRef | None = None
@@ -217,6 +219,8 @@ class SearchRequest(BaseModel):
 
     @model_validator(mode="after")
     def _trace_needs_compare(self) -> SearchRequest:
+        if self.candidates is not None and self.candidates < self.k:
+            raise ValueError("candidates must be >= k.")
         if self.trace and not self.compare:
             raise ValueError("trace explains misses against exact ground truth; set compare.")
         return self
@@ -250,6 +254,10 @@ class SearchResponse(BaseModel):
     params: dict[str, int]
     latency_ms: float
     results: list[ResultRow]
+    reranked: list[ResultRow] | None = None
+    reranked_recall: float | None = None
+    reranked_latency_ms: float | None = None
+    candidate_count: int | None = None
     truth: list[TruthRow] | None = None
     recall: float | None = None
     truth_source: Literal["raw", "reconstructed"] | None = None

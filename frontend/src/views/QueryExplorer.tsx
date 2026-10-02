@@ -61,6 +61,19 @@ export default function QueryExplorer({
             )}
           </div>
           <ResultsTable result={result.search} />
+          {result.search.reranked && (
+            <>
+              <Card title="Exact reranking experiment">
+                <p className="text-sm text-ink-2">
+                  Retrieved {result.search.candidate_count} candidates and ranked them using raw vectors.
+                  {' '}Recall: {result.search.recall?.toFixed(3) ?? 'not measured'} → {result.search.reranked_recall?.toFixed(3) ?? 'not measured'}.
+                  {' '}Search latency: {result.search.latency_ms.toFixed(2)} ms; candidate search + reranking: {result.search.reranked_latency_ms?.toFixed(2)} ms.
+                </p>
+                <p className="mt-2 text-xs text-muted">Single-query timings are exploratory. Reranking cannot recover neighbours outside the candidate set.</p>
+              </Card>
+              <ResultsTable reranked title="Reranked results" result={{ ...result.search, results: result.search.reranked }} />
+            </>
+          )}
           {result.search.truth && <TruthTable result={result.search} isIvf={isIvf} />}
         </div>
       )}

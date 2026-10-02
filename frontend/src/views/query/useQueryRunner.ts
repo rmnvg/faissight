@@ -40,6 +40,7 @@ export function useQueryRunner(info: Info, params: URLSearchParams) {
   const [nprobe, setNprobe] = useState(intParam(params, 'nprobe') ?? nprobeDefault)
   const [efSearch, setEfSearch] = useState(intParam(params, 'ef') ?? efSearchDefault)
   const [compare, setCompare] = useState(true)
+  const [candidates, setCandidates] = useState(intParam(params, 'candidates') ?? 0)
   const [formError, setFormError] = useState<string | null>(null)
 
   const nextSignal = useLatestSignal()
@@ -82,11 +83,14 @@ export function useQueryRunner(info: Info, params: URLSearchParams) {
         return fail(`Paste ${info.d} numbers separated by commas or spaces (got ${nums.length}).`)
       query = { vector: nums }
     }
+    if (candidates !== 0 && (!Number.isInteger(candidates) || candidates < k || candidates > (info.demo_limits?.max_k ?? 10000)))
+      return fail('Rerank candidates must be at least k and within the displayed limit.')
     setFormError(null)
     return {
       query,
       k,
       compare,
+      ...(candidates > 0 ? { candidates } : {}),
       ...(isIvf ? { nprobe } : {}),
       ...(isHnsw ? { efSearch } : {}),
       projection: { method: 'pca', dims: 2 },
@@ -101,6 +105,7 @@ export function useQueryRunner(info: Info, params: URLSearchParams) {
     nprobe: req.nprobe ?? null,
     ef: req.efSearch ?? null,
     compare: req.compare ? null : 0,
+    candidates: req.candidates ?? null,
   })
 
   const submit = (e?: FormEvent) => {
@@ -135,10 +140,13 @@ export function useQueryRunner(info: Info, params: URLSearchParams) {
     setNprobe(urlNprobe)
     setEfSearch(urlEf)
     setCompare(urlCompare)
+    const urlCandidates = intParam(params, 'candidates') ?? 0
+    setCandidates(urlCandidates)
     run.mutate({
       query: urlId !== null ? { id: urlId } : urlRow !== null ? { row: urlRow } : { text: urlText ?? '' },
       k: urlK,
       compare: urlCompare,
+      ...(urlCandidates > 0 ? { candidates: urlCandidates } : {}),
       ...(isIvf ? { nprobe: urlNprobe } : {}),
       ...(isHnsw ? { efSearch: urlEf } : {}),
       projection: { method: 'pca', dims: 2 },
@@ -168,6 +176,8 @@ export function useQueryRunner(info: Info, params: URLSearchParams) {
       setEfSearch,
       compare,
       setCompare,
+      candidates,
+      setCandidates,
       formError,
     },
     submit,

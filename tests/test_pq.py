@@ -127,3 +127,32 @@ def test_distortion_on_empty_source_is_a_clear_error() -> None:
     empty = V.from_arrays(li, np.empty((0, 4), dtype=np.float32))
     with pytest.raises(ValueError, match="at least one"):
         P.distance_distortion(empty, empty, Metric.L2)
+
+
+def test_batched_errors_match_full_precision_reference():
+    rng = np.random.default_rng(5)
+    # Cross multiple 8 MiB batches; zero norms retain the existing zero-relative convention.
+    x = rng.normal(size=(18000, 64)).astype(np.float32)
+    x[0] = 0
+    stored = x + rng.normal(scale=0.1, size=x.shape).astype(np.float32)
+    ids = np.arange(len(x))
+    err, rel = P.reconstruction_errors(
+        V.VectorSource(x, ids, False), V.VectorSource(stored, ids, True)
+    )
+    expected = np.sum((x.astype(np.float64) - stored.astype(np.float64)) ** 2, axis=1)
+    norm = np.sum(x.astype(np.float64) ** 2, axis=1)
+    np.testing.assert_allclose(err, expected, rtol=1e-12)
+    np.testing.assert_allclose(rel[1:], expected[1:] / norm[1:], rtol=1e-12)
+    assert rel[0] == 0
+
+
+def test_distortion_does_not_build_a_corpus_copy(monkeypatch, synthetic, x):
+    li = load_index(synthetic["ivf_flat"])
+    raw, stored = V.from_arrays(li, x), V.reconstruct_all(li)
+
+    def forbidden(*args, **kwargs):
+        raise AssertionError("Do not duplicate the corpus in an IndexFlat")
+
+    monkeypatch.setattr(faiss, "IndexFlat", forbidden)
+    report = P.distance_distortion(raw, stored, Metric.L2)
+    assert report.near_correlation == pytest.approx(1)

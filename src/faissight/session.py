@@ -158,6 +158,8 @@ class MemoryEstimate:
     """Decoding every stored vector from the index (n x d x 4 plus int64 ids)."""
     reconstructed: bool
     """True once the decoded vectors are in memory."""
+    pq_workspace_bytes: int
+    """Approximate extra NumPy analysis workspace, excluding decoding and FAISS scratch."""
 
 
 @dataclass(frozen=True)
@@ -378,6 +380,7 @@ class Session:
             mmap_note=self.mmap_note,
             reconstruct_bytes=n * d * 4 + n * 8,
             reconstructed="reconstructed" in self._lazy,
+            pq_workspace_bytes=pq_mod.workspace_bytes(n, d),
         )
 
     def metadata_coverage(self) -> float | None:
@@ -436,13 +439,18 @@ class Session:
         nprobe: int | None = None,
         ef_search: int | None = None,
         compare: bool = True,
+        candidates: int | None = None,
     ) -> QueryReport:
         """Resolve, search, and (with ``compare``) explain against exact ground truth.
 
         ``row`` is a row of the ``--queries`` set, as numbered by sweeps and comparisons.
         """
+        if candidates is not None and (candidates < k or self._raw is None):
+            raise ValueError("Reranking needs raw vectors and candidates >= k.")
         if self.demo_limits is not None:
             lim = self.demo_limits
+            if candidates is not None and candidates > lim.max_k:
+                raise DemoLimitError(f"Reranking uses at most {lim.max_k} candidates here.")
             if k > lim.max_k:
                 raise DemoLimitError(f"k is capped at {lim.max_k} in this demo.")
             if ef_search is not None and ef_search > lim.max_ef_search:
@@ -465,6 +473,8 @@ class Session:
             ef_search=ef_search,
             ground_truth=self.ground_truth if compare else None,
             assignments=self.assignments if compare else None,
+            rerank_source=self._raw,
+            candidates=candidates,
         )
 
     # --- projections ----------------------------------------------------------------------

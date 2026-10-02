@@ -50,6 +50,12 @@ from faissight.core.projection import (
     place_points,
     stratified_sample,
 )
+from faissight.core.relevance import (
+    RelevanceMetrics,
+    evaluate_relevance,
+    load_judgements,
+    relevance_metrics,
+)
 from faissight.core.runs import (
     RunComparison,
     RunFormatError,
@@ -70,6 +76,7 @@ from faissight.core.search import (
     SearchResult,
     explain_query,
     recall_at_k,
+    rerank,
     resolve_query,
     trace_ivf,
 )
@@ -119,6 +126,7 @@ __all__ = [
     "QueryKind",
     "QueryReport",
     "QuerySet",
+    "RelevanceMetrics",
     "ResolvedQuery",
     "RunComparison",
     "RunFormatError",
@@ -140,6 +148,7 @@ __all__ = [
     "compare_runs",
     "compute_projection",
     "default_values",
+    "evaluate_relevance",
     "explain_query",
     "fit_pca",
     "from_arrays",
@@ -151,11 +160,14 @@ __all__ = [
     "list_sizes",
     "list_stats",
     "load_index",
+    "load_judgements",
     "load_metadata",
     "load_run",
     "place_points",
     "recall_at_k",
     "reconstruct_all",
+    "relevance_metrics",
+    "rerank",
     "resolve_query",
     "run_record",
     "sample_queries",

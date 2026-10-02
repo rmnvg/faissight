@@ -127,6 +127,58 @@ def _info_table(li: LoadedIndex) -> Table:
 
 
 @app.command()
+def evaluate(
+    index_path: Annotated[Path, typer.Argument(help="FAISS index to evaluate.")],
+    vectors: Annotated[Path, typer.Option(help="Raw corpus vectors .npy.")],
+    queries: Annotated[Path, typer.Option(help="Held-out query vectors .npy.")],
+    labels: Annotated[Path, typer.Option(help="JSONL query rows and graded relevant chunk ids.")],
+    ids: Annotated[Path | None, typer.Option(help="Ids for rows in --vectors.")] = None,
+    k: Annotated[int, typer.Option(min=1)] = 10,
+    nprobe: Annotated[int | None, typer.Option(min=1)] = None,
+    ef_search: Annotated[int | None, typer.Option(min=1)] = None,
+    candidates: Annotated[
+        int | None, typer.Option(min=1, help="Also test exact reranking.")
+    ] = None,
+    as_json: Annotated[bool, typer.Option("--json")] = False,
+    mmap: Annotated[bool, typer.Option("--mmap")] = False,
+) -> None:
+    """Measure labelled relevance recall, MRR and nDCG@k (not ANN recall)."""
+    from faissight.core.relevance import evaluate_relevance, load_judgements
+
+    session = None
+    try:
+        session = Session(
+            index_path, vectors=vectors, ids=ids, queries=queries, disk_cache=False, mmap=mmap
+        )
+        assert session.queries is not None
+        result = evaluate_relevance(
+            session.li,
+            session.queries,
+            load_judgements(labels, len(session.queries)),
+            session.source,
+            k=k,
+            nprobe=nprobe,
+            ef_search=ef_search,
+            candidates=candidates,
+        )
+    except FaissNotInstalledError as e:
+        raise _fail("FAISS is not installed.", e.hint) from e
+    except (OSError, ValueError) as e:
+        raise _fail(str(e), getattr(e, "hint", None)) from e
+    finally:
+        if session is not None:
+            session.jobs.close()
+    if as_json:
+        typer.echo(json.dumps(result, indent=2, allow_nan=False))
+    else:
+        console.print(f"Labelled relevance @{k} · {result['n_queries']} queries")
+        console.print("Unjudged chunks count as non-relevant; nDCG uses linear gains.")
+        console.print(result["metrics"])
+        if result["reranked_metrics"] is not None:
+            console.print("After exact reranking:", result["reranked_metrics"])
+
+
+@app.command()
 def info(
     index_path: Annotated[Path, typer.Argument(help="Path to a FAISS index file.")],
 ) -> None:

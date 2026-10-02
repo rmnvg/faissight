@@ -1137,3 +1137,44 @@ def test_empty_index_answers_without_server_errors(kind) -> None:
     _assert_error(client.get("/api/pq/error"), 400, "EMPTY_INDEX")
     if kind == "hnsw":
         _assert_error(client.post("/api/trace/hnsw", json=request), 400, "EMPTY_INDEX")
+
+
+def test_reranking_experiment_and_validation(synthetic):
+    session = Session(synthetic["ivf_pq"], vectors=synthetic["vectors"])
+    with _client(session) as client:
+        req = {"query": {"id": 42}, "k": 10, "nprobe": NLIST, "candidates": N}
+        response = client.post("/api/search", json=req)
+        assert response.status_code == 200, response.text
+        body = response.json()
+        assert body["reranked_recall"] == 1
+        assert body["candidate_count"] == N - 1
+        assert len(body["reranked"]) == 10
+        assert 42 not in [r["id"] for r in body["reranked"]]
+        assert body["reranked_latency_ms"] >= 0
+        req["compare"] = False
+        body = client.post("/api/search", json=req).json()
+        assert body["reranked_recall"] is None
+        assert len(body["reranked"]) == 10
+        req["candidates"] = 9
+        assert client.post("/api/search", json=req).status_code == 422
+    with _client(Session(synthetic["ivf_pq"])) as client:
+        req["candidates"] = 100
+        response = client.post("/api/search", json=req)
+        assert response.status_code == 400
+        assert "raw vectors" in response.json()["message"]
+
+
+def test_demo_caps_rerank_candidates(synthetic):
+    with _client(
+        Session(synthetic["ivf_flat"], vectors=synthetic["vectors"], demo_mode=True)
+    ) as client:
+        response = client.post(
+            "/api/search",
+            json={
+                "query": {"id": 42},
+                "k": 10,
+                "candidates": 101,
+            },
+        )
+        assert response.status_code == 403
+        assert response.json()["error_code"] == "DEMO_LIMIT"

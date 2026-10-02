@@ -433,6 +433,40 @@ class QueryReport:
     truth_reconstructed: bool = False
     """Ground truth was computed on reconstructed vectors, so PQ/SQ error isn't measured."""
     ivf_trace: IvfTrace | None = None
+    reranked: SearchResult | None = None
+    reranked_recall: float | None = None
+    candidate_count: int | None = None
+
+
+def rerank(
+    source: VectorSource, query: npt.ArrayLike, candidates: SearchResult, k: int
+) -> SearchResult:
+    """Rank candidate ids by exact input-space distances, without searching the corpus.
+
+    Latency includes candidate retrieval plus raw-vector lookup and reranking.
+    """
+    if source.reconstructed:
+        raise ValueError("Exact reranking needs raw vectors.")
+    if k < 1 or candidates.metric is Metric.OTHER:
+        raise ValueError("Reranking needs k >= 1 and an L2 or inner-product metric.")
+    q = _as_query(query, source.vectors.shape[1])[0].astype(np.float64)
+    start = time.perf_counter()
+    ids = candidates.valid_ids
+    x = source.get(ids).astype(np.float64)
+    if candidates.metric is Metric.IP:
+        distances = x @ q
+        order = np.argsort(-distances, kind="stable")[:k]
+    else:
+        x -= q
+        distances = np.einsum("ij,ij->i", x, x)
+        order = np.argsort(distances, kind="stable")[:k]
+    return SearchResult(
+        ids[order],
+        distances[order].astype(np.float32),
+        candidates.metric,
+        candidates.latency_ms + (time.perf_counter() - start) * 1000,
+        candidates.params,
+    )
 
 
 def explain_query(
@@ -444,13 +478,30 @@ def explain_query(
     ef_search: int | None = None,
     ground_truth: GroundTruth | None = None,
     assignments: Assignments | None = None,
+    rerank_source: VectorSource | None = None,
+    candidates: int | None = None,
 ) -> QueryReport:
     """Search, compare with exact ground truth (if given) and trace IVF probing (if IVF)."""
     result = search(
         li, query.vector, k, nprobe=nprobe, ef_search=ef_search, exclude_id=query.exclude_id
     )
+    reranked = None
+    candidate_count = None
+    if candidates is not None:
+        if candidates < k or rerank_source is None or rerank_source.reconstructed:
+            raise ValueError("Reranking needs raw vectors and candidates >= k.")
+        pool = search(
+            li,
+            query.vector,
+            candidates,
+            nprobe=nprobe,
+            ef_search=ef_search,
+            exclude_id=query.exclude_id,
+        )
+        reranked = rerank(rerank_source, query.vector, pool, k)
+        candidate_count = len(pool.valid_ids)
     if ground_truth is None:
-        return QueryReport(query, result)
+        return QueryReport(query, result, reranked=reranked, candidate_count=candidate_count)
     truth = ground_truth.search(query.vector, k, exclude_id=query.exclude_id)
     trace = None
     if li.kind.is_ivf and assignments is not None:
@@ -462,4 +513,7 @@ def explain_query(
         recall=recall_at_k(result.ids, truth.ids),
         truth_reconstructed=ground_truth.reconstructed,
         ivf_trace=trace,
+        reranked=reranked,
+        reranked_recall=recall_at_k(reranked.ids, truth.ids) if reranked else None,
+        candidate_count=candidate_count,
     )

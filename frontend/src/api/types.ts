@@ -59,6 +59,7 @@ export interface Info {
     mmap_note: string | null
     /** Memory needed to decode every stored vector from the index. */
     reconstruct_bytes: number
+    pq_workspace_bytes?: number
     /** The decoded vectors are already in memory. */
     reconstructed: boolean
   }
@@ -140,6 +141,7 @@ export interface SearchRequest {
   nprobe?: number
   efSearch?: number
   compare: boolean
+  candidates?: number
   /** IVF only, needs compare: include the probe trace in the search response. */
   trace?: boolean
   projection?: { method: ProjectionMethod; dims: Dims }
@@ -173,6 +175,10 @@ export interface SearchResponse {
   params: Record<string, number>
   latency_ms: number
   results: ResultRow[]
+  reranked?: ResultRow[] | null
+  reranked_recall?: number | null
+  reranked_latency_ms?: number | null
+  candidate_count?: number | null
   truth: TruthRow[] | null
   recall: number | null
   truth_source: 'raw' | 'reconstructed' | null
