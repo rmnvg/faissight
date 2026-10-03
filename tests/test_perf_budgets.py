@@ -39,7 +39,9 @@ def test_slowdown_against_baseline_needs_ratio_and_delta(perf) -> None:
     assert len(perf.check({"peak_rss_mib": 420.0}, base)) == 1
 
 
-def test_check_command_exit_code(perf, tmp_path, capsys) -> None:
+def test_check_command_exit_code(perf, tmp_path, capsys, monkeypatch) -> None:
+    monkeypatch.delenv("GITHUB_ACTIONS", raising=False)  # set on CI; switches the format
+
     def write(name: str, metrics: dict[str, float]) -> Path:
         path = tmp_path / name
         path.write_text(json.dumps({"metrics": metrics}))
@@ -54,3 +56,12 @@ def test_check_command_exit_code(perf, tmp_path, capsys) -> None:
         == 1
     )
     assert "FAIL sweep_s" in capsys.readouterr().out
+
+
+def test_check_command_annotates_on_github_actions(perf, tmp_path, capsys, monkeypatch) -> None:
+    monkeypatch.setenv("GITHUB_ACTIONS", "true")
+    base, slow = tmp_path / "base.json", tmp_path / "slow.json"
+    base.write_text(json.dumps({"metrics": {"sweep_s": 1.0}}))
+    slow.write_text(json.dumps({"metrics": {"sweep_s": 3.0}}))
+    assert perf.main(["check", str(slow), "--baseline", str(base)]) == 1
+    assert "::error::sweep_s" in capsys.readouterr().out

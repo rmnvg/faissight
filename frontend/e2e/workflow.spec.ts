@@ -34,7 +34,9 @@ test('navigation menu traps focus, closes with Escape, and restores focus', asyn
 test('relevance evaluation loads judgements, reranks, exports, and archives the result', async ({ page }, testInfo) => {
   const base = 'http://127.0.0.1:8798'
   // Browsers share one server; distinct settings give each its own job and saved run.
-  const candidates = 20 + testInfo.parallelIndex + 3 * testInfo.repeatEachIndex
+  // Keyed on the browser, not the worker: with one worker every project gets index 0.
+  const browser = ['chromium', 'firefox', 'webkit'].indexOf(testInfo.project.name)
+  const candidates = 20 + Math.max(browser, 0) + 3 * testInfo.repeatEachIndex
   const info = await (await page.request.get(`${base}/api/info`)).json()
   await page.goto(`${base}/#/evaluation`)
   await expect(page.getByRole('heading', { name: 'Relevance', exact: true })).toBeVisible()
