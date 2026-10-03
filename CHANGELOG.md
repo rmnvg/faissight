@@ -6,6 +6,8 @@ All notable changes to faissight are documented here. The format follows
 
 ## [Unreleased]
 
+## [0.2.0] - 2026-10-03
+
 ### Added
 
 - Saved runs and baselines: `faissight sweep --save` and the Tuner's **Save run** keep a
