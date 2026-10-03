@@ -4,9 +4,15 @@ from __future__ import annotations
 
 from typing import Annotated, Any, Literal
 
-from pydantic import BaseModel, ConfigDict, Field, PlainSerializer, model_validator
+from pydantic import BaseModel as PydanticBaseModel
+from pydantic import ConfigDict, Field, PlainSerializer, WithJsonSchema, model_validator
 
 from faissight.core.search import MissReason
+
+
+class BaseModel(PydanticBaseModel):
+    model_config = ConfigDict(json_schema_serialization_defaults_required=True)
+
 
 Scalar = int | float | bool | str
 
@@ -15,6 +21,10 @@ Scalar = int | float | bool | str
 UserId = Annotated[
     int,
     Field(ge=-1, le=2**63 - 1),
+    WithJsonSchema(
+        {"anyOf": [{"type": "integer"}, {"type": "string", "pattern": r"^-?[0-9]+$"}]},
+        mode="validation",
+    ),
     PlainSerializer(
         lambda value: str(value) if value > 2**53 - 1 else value,
         return_type=int | str,

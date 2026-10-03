@@ -31,6 +31,8 @@ jobs:
         run: |
           uv run ruff check .
           uv run ruff format --check .
+      - name: Check generated API contracts
+        run: uv run python scripts/generate_api_types.py --check
       - name: Typecheck
         run: uv run mypy
       - name: Test
