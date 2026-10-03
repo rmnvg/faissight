@@ -10,7 +10,7 @@ import os
 import threading
 from collections import OrderedDict
 from collections.abc import Callable
-from dataclasses import dataclass
+from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Any, TypeVar
 
@@ -28,6 +28,7 @@ from faissight.core.embed import (
     looks_normalized,
     sentence_transformer_embedder,
 )
+from faissight.core.history import RunHistory
 from faissight.core.jobs import Job, JobRunner
 from faissight.core.loader import load_index
 from faissight.core.metadata import Metadata, load_metadata
@@ -44,6 +45,7 @@ from faissight.core.projection import (
     index_fingerprint,
     place_points,
 )
+from faissight.core.relevance import evaluate_relevance, parse_judgements
 from faissight.core.search import (
     GroundTruth,
     QueryReport,
@@ -209,12 +211,19 @@ class Session:
     ) -> None:
         self.li: LoadedIndex = load_index(index)
         self.jobs = JobRunner()
+        # Interactive searches get their own small pool: they must not queue behind sweeps,
+        # and their short-lived results must not evict finished sweeps from ``jobs``.
+        self.search_jobs = JobRunner(max_workers=4, max_pending=16, max_completed=8, ttl=60)
         self.max_points = int(max_points)
         if self.max_points < 1:
             raise InputError("BAD_MAX_POINTS", "max_points must be >= 1.", "Use e.g. 50000.")
         # Resolve now, not in the background thread, so later env changes can't redirect it.
         self._cache_root = cache_root or default_cache_root()
         self._disk_cache = disk_cache
+        self.history = RunHistory(
+            self._cache_root / "history", enabled=disk_cache and not demo_mode
+        )
+        self.history_warning: str | None = None
         self._lock = threading.RLock()
         self._lazy: dict[str, Any] = {}
         self._sweep_inputs: OrderedDict[
@@ -440,6 +449,7 @@ class Session:
         ef_search: int | None = None,
         compare: bool = True,
         candidates: int | None = None,
+        progress: Callable[[float, str], None] | None = None,
     ) -> QueryReport:
         """Resolve, search, and (with ``compare``) explain against exact ground truth.
 
@@ -455,6 +465,8 @@ class Session:
                 raise DemoLimitError(f"k is capped at {lim.max_k} in this demo.")
             if ef_search is not None and ef_search > lim.max_ef_search:
                 raise DemoLimitError(f"efSearch is capped at {lim.max_ef_search} in this demo.")
+        report = progress or (lambda _f, _m: None)
+        report(0.0, "Resolving query")
         rq = resolve_query(
             self.li,
             id=id,
@@ -465,17 +477,103 @@ class Session:
             row=row,
             queries=self.queries,
         )
+        report(0.1, "Preparing ground truth")
+        truth = self.ground_truth if compare else None
+        report(0.2, "Preparing index assignments")
+        assignments = self.assignments if compare else None
+        report(0.3, "Searching")
         return explain_query(
             self.li,
             rq,
             k,
             nprobe=nprobe,
             ef_search=ef_search,
-            ground_truth=self.ground_truth if compare else None,
-            assignments=self.assignments if compare else None,
+            ground_truth=truth,
+            assignments=assignments,
             rerank_source=self._raw,
             candidates=candidates,
+            progress=report,
         )
+
+    def archive(self, kind: str, label: str, data: dict[str, Any]) -> None:
+        """Persist completed work without making a disk failure invalidate measurements."""
+        try:
+            if not self.history.enabled:
+                return
+            name = self.li.path.name if self.li.path is not None else self.li.kind.value
+            self.history.save(kind, f"{label} · {name}", self.index_sha1, data)
+        except (OSError, ValueError, TypeError):
+            self.history_warning = (
+                "A completed run could not be saved. Check disk space and permissions."
+            )
+            log.warning(self.history_warning, exc_info=True)
+
+    def evaluation_job(
+        self,
+        judgements: str,
+        *,
+        k: int = 10,
+        candidates: int | None = None,
+        nprobe: int | None = None,
+        ef_search: int | None = None,
+    ) -> tuple[str, Job[dict[str, object]]]:
+        """Evaluate held-out queries as bounded, cancellable background work."""
+        if self.queries is None or self._raw is None:
+            raise ValueError("Evaluation needs --queries and --vectors. Restart with both inputs.")
+        if len(self.queries) > 10_000:
+            raise ValueError(
+                "Web evaluation supports at most 10,000 queries; use the CLI for more."
+            )
+        if candidates is not None and candidates < k:
+            raise ValueError("Rerank candidates must be at least k.")
+        if self.demo_limits is not None:
+            lim = self.demo_limits
+            if len(self.queries) > lim.max_sweep_queries or k > lim.max_sweep_k:
+                raise DemoLimitError("Evaluation exceeds this demo's query or k limit.")
+            if candidates is not None and candidates > lim.max_k:
+                raise DemoLimitError("Rerank candidates exceed this demo's limit.")
+            if ef_search is not None and ef_search > lim.max_ef_search:
+                raise DemoLimitError("efSearch exceeds this demo's limit.")
+        resolve_search_params(self.li, nprobe, ef_search)
+        labels = parse_judgements(judgements, len(self.queries))
+        key = (
+            "evaluation",
+            hashlib.sha256(judgements.encode()).hexdigest(),
+            k,
+            candidates,
+            nprobe,
+            ef_search,
+        )
+        job_id = hashlib.sha256(repr(key).encode()).hexdigest()[:24]
+        queries, raw = self.queries, self._raw
+
+        def work(progress: Callable[[float, str], None]) -> dict[str, object]:
+            result = evaluate_relevance(
+                self.li,
+                queries,
+                labels,
+                raw,
+                k=k,
+                candidates=candidates,
+                nprobe=nprobe,
+                ef_search=ef_search,
+                progress=progress,
+            )
+            progress(1.0, "Saving completed evaluation")
+            rerank = f", rerank {candidates}" if candidates is not None else ""
+            self.archive(
+                "evaluation",
+                f"Relevance@{k}{rerank} · {len(queries)} queries",
+                {
+                    **result,
+                    "query_sha256": hashlib.sha256(queries.tobytes()).hexdigest(),
+                    "judgements_sha256": hashlib.sha256(judgements.encode()).hexdigest(),
+                },
+            )
+            return result
+
+        job = self.jobs.get_or_start(("evaluation", job_id), work, retry=True)
+        return job_id, job
 
     # --- projections ----------------------------------------------------------------------
 
@@ -694,7 +792,7 @@ class Session:
         def work(progress: Callable[[float, str], None]) -> SweepResult:
             progress(0.0, "Computing exact ground truth")
             qs, truth = self._sweep_data(n_queries, k, seed, progress)
-            return sweep(
+            result = sweep(
                 self.li,
                 qs,
                 truth,
@@ -707,6 +805,16 @@ class Session:
                 seed=seed,
                 assignments=self.assignments if p is SweepParam.NPROBE else None,
             )
+
+            progress(1.0, "Saving completed sweep")
+            if self.history.enabled:
+                # The target only sets the stored recommendation; measurements are kept whole.
+                self.archive(
+                    "sweep",
+                    f"{p.value} {vals[0]}-{vals[-1]} · k={k} · {n_queries} queries",
+                    self.sweep_run(result, 0.95),
+                )
+            return result
 
         # Starting a sweep is explicit, so a failed or cancelled run with the same settings reruns.
         job = self.jobs.get_or_start(key, work, retry=True)
@@ -831,7 +939,7 @@ class Session:
         def work(progress: Callable[[float, str], None]) -> comparison_mod.ComparisonResult:
             progress(0.0, "Computing exact ground truth")
             qs, truth = self._sweep_data(n_queries, k, seed, progress)
-            return comparison_mod.compare_indexes(
+            result = comparison_mod.compare_indexes(
                 self.li,
                 right,
                 self.source,
@@ -846,6 +954,18 @@ class Session:
                 truth=truth,
                 progress=progress,
             )
+
+            progress(1.0, "Saving completed comparison")
+            self.archive(
+                "comparison",
+                f"vs {self.candidates[candidate].name} · k={k} · {n_queries} queries",
+                {
+                    **asdict(result),
+                    "left_index_sha1": self.index_sha1,
+                    "right_index_sha1": index_fingerprint(right),
+                },
+            )
+            return result
 
         # Starting a comparison is explicit, so a failed or cancelled run reruns.
         job = self.jobs.get_or_start(key, work, retry=True)

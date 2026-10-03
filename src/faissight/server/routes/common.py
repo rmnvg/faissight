@@ -2,15 +2,21 @@
 
 from __future__ import annotations
 
-from typing import Annotated, Literal
+import asyncio
+import uuid
+from collections.abc import Callable
+from typing import Annotated, Literal, TypeVar, cast
 
 import numpy as np
 import numpy.typing as npt
 from fastapi import Depends, Request
 from fastapi.responses import JSONResponse
 
+from faissight.core.jobs import JobCapacityError, ProgressFn
 from faissight.server import schemas as S
 from faissight.session import Session
+
+T = TypeVar("T")
 
 COORD_DECIMALS = 4
 
@@ -75,7 +81,9 @@ def round_coords(a: npt.NDArray[np.float32]) -> list[float]:
     return rounded
 
 
-def job_response(body: S.SweepJobResponse | S.CompareJobResponse) -> JSONResponse:
+def job_response(
+    body: S.SweepJobResponse | S.CompareJobResponse | S.EvaluationJobResponse,
+) -> JSONResponse:
     """A background job's JSON: 202 while running, 200 once finished.
 
     ``mode="json"`` applies the large-id-as-string serializer to any ids in the result.
@@ -83,3 +91,31 @@ def job_response(body: S.SweepJobResponse | S.CompareJobResponse) -> JSONRespons
     return JSONResponse(
         status_code=202 if body.status == "running" else 200, content=body.model_dump(mode="json")
     )
+
+
+async def run_interactive(request: Request, session: Session, work: Callable[[ProgressFn], T]) -> T:
+    """Run a search-like request on the session's bounded search pool.
+
+    If the client disconnects (a newer query replaced it, or the tab closed), the work is
+    cancelled: queued work never starts, and running work stops at its next checkpoint.
+    """
+    key = ("interactive", uuid.uuid4().hex)
+    try:
+        job = session.search_jobs.get_or_start(key, work)
+    except JobCapacityError as e:
+        raise ApiError(
+            429, "BUSY", "Too many searches are running.", "Wait a moment and try again."
+        ) from e
+    try:
+        while not job.wait(0):
+            if await request.is_disconnected():
+                session.search_jobs.cancel(key)
+                # The client is gone; this status is only for logs.
+                raise ApiError(499, "CANCELLED", "The client closed the request.")
+            await asyncio.sleep(0.02)
+    except asyncio.CancelledError:
+        session.search_jobs.cancel(key)
+        raise
+    if job.error is not None:
+        raise job.error
+    return cast(T, job.result)

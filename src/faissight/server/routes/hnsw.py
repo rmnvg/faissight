@@ -5,15 +5,17 @@ from __future__ import annotations
 from typing import Annotated
 
 import numpy as np
-from fastapi import APIRouter, Depends, Query
+from fastapi import APIRouter, Depends, Query, Request
 
 from faissight.core import hnsw as H
 from faissight.core import hnsw_trace as HT
+from faissight.core.jobs import ProgressFn
 from faissight.server import schemas as S
 from faissight.server.routes.common import (
     ApiError,
     SupportedDep,
     round_coords,
+    run_interactive,
     snippet,
 )
 from faissight.session import Session
@@ -97,7 +99,15 @@ def hnsw_graph(
 
 
 @router.post("/trace/hnsw", response_model=S.HnswTraceResponse)
-def trace_hnsw(req: S.SearchRequest, session: HnswDep) -> S.HnswTraceResponse:
+async def trace_hnsw(
+    req: S.SearchRequest, session: HnswDep, request: Request
+) -> S.HnswTraceResponse:
+    return await run_interactive(request, session, lambda p: _trace_hnsw(req, session, p))
+
+
+def _trace_hnsw(
+    req: S.SearchRequest, session: Session, progress: ProgressFn
+) -> S.HnswTraceResponse:
     li = session.li
     report = session.query(
         id=req.query.id,
@@ -107,7 +117,9 @@ def trace_hnsw(req: S.SearchRequest, session: HnswDep) -> S.HnswTraceResponse:
         k=req.k,
         ef_search=req.ef_search,
         compare=req.compare,
+        progress=progress,
     )
+    progress(0.9, "Tracing the graph search")
     ef = int(report.result.params["efSearch"])
     # Trace k+1 when the query is a stored vector, then drop it, like the search does.
     extra = 1 if report.query.exclude_id is not None else 0

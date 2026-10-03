@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import math
+from collections.abc import Callable
 from dataclasses import asdict, dataclass
 from pathlib import Path
 
@@ -58,31 +59,35 @@ def relevance_metrics(found: list[int], labels: dict[int, float], k: int) -> Rel
 
 def load_judgements(path: str | Path, n_queries: int) -> list[dict[int, float]]:
     """JSONL: {"row": 0, "relevant": {"42": 2, "77": 1}}; one row per query."""
+    return parse_judgements(Path(path).read_text(), n_queries)
+
+
+def parse_judgements(text: str, n_queries: int) -> list[dict[int, float]]:
+    """Validate JSONL judgements supplied by a file or a web client."""
     rows: dict[int, dict[int, float]] = {}
-    with Path(path).open() as stream:
-        for line_no, line in enumerate(stream, 1):
-            if not line.strip():
-                continue
-            try:
-                obj = json.loads(line)
-                row, raw = obj["row"], obj["relevant"]
-                if type(row) is not int or not 0 <= row < n_queries or row in rows:
-                    raise ValueError("row must be unique and within the query set")
-                if not isinstance(raw, dict):
-                    raise ValueError("relevant must map decimal chunk ids to grades")
-                labels = {}
-                for key, grade in raw.items():
-                    if not key.isascii() or not key.isdecimal() or not 0 <= int(key) < 2**63:
-                        raise ValueError("chunk ids must be non-negative int64 decimals")
-                    if int(key) in labels:
-                        raise ValueError("duplicate chunk id")
-                    if type(grade) not in (int, float):
-                        raise ValueError("grades must be numbers")
-                    labels[int(key)] = float(grade)
-                relevance_metrics([], labels, 1)
-                rows[row] = labels
-            except (ValueError, TypeError, KeyError, OverflowError) as e:
-                raise ValueError(f"Invalid judgements on line {line_no}: {e}") from e
+    for line_no, line in enumerate(text.splitlines(), 1):
+        if not line.strip():
+            continue
+        try:
+            obj = json.loads(line)
+            row, raw = obj["row"], obj["relevant"]
+            if type(row) is not int or not 0 <= row < n_queries or row in rows:
+                raise ValueError("row must be unique and within the query set")
+            if not isinstance(raw, dict):
+                raise ValueError("relevant must map decimal chunk ids to grades")
+            labels = {}
+            for key, grade in raw.items():
+                if not key.isascii() or not key.isdecimal() or not 0 <= int(key) < 2**63:
+                    raise ValueError("chunk ids must be non-negative int64 decimals")
+                if int(key) in labels:
+                    raise ValueError("duplicate chunk id")
+                if type(grade) not in (int, float):
+                    raise ValueError("grades must be numbers")
+                labels[int(key)] = float(grade)
+            relevance_metrics([], labels, 1)
+            rows[row] = labels
+        except (ValueError, TypeError, KeyError, OverflowError) as e:
+            raise ValueError(f"Invalid judgements on line {line_no}: {e}") from e
     if len(rows) != n_queries or n_queries == 0:
         raise ValueError("Supply exactly one judgement row for every evaluation query.")
     return [rows[i] for i in range(n_queries)]
@@ -98,6 +103,7 @@ def evaluate_relevance(
     nprobe: int | None = None,
     ef_search: int | None = None,
     candidates: int | None = None,
+    progress: Callable[[float, str], None] | None = None,
 ) -> dict[str, object]:
     """Macro-average labelled metrics, with optional exact candidate reranking.
 
@@ -125,6 +131,8 @@ def evaluate_relevance(
     rows = []
     base_metrics, reranked_metrics = [], []
     for row, (query, labels) in enumerate(zip(q, judgements, strict=True)):
+        if progress is not None:
+            progress(row / len(q), f"Evaluating query {row + 1} of {len(q)}")
         base = search(li, query, k, nprobe=nprobe, ef_search=ef_search)
         metrics = relevance_metrics(base.valid_ids.tolist(), labels, k)
         base_metrics.append(metrics)
@@ -152,6 +160,8 @@ def evaluate_relevance(
             for name in ("recall", "mrr", "ndcg")
         }
 
+    if progress is not None:
+        progress(1.0, "Evaluation complete")
     return {
         "k": k,
         "metric": li.metric.value,
