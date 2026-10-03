@@ -1,0 +1,4 @@
+contact_links:
+  - name: Report a security vulnerability
+    url: https://github.com/rmnvg/faissight/security/advisories/new
+    about: Please report vulnerabilities privately, not in a public issue.
