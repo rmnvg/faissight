@@ -72,7 +72,7 @@ report.recall, report.ivf_trace.min_nprobe_for_all
 
 <table>
 <tr>
-<td><img alt="Tuner: recall and latency by nprobe with a recommendation" src="https://raw.githubusercontent.com/rmnvg/faissight/main/docs/screenshots/tuner.png"></td>
+<td><img alt="Tuner: no nprobe reaches 0.95 recall on IVF-PQ; the suggested next step explains that compression caps recall near 0.62 and to re-rank with exact distances" src="https://raw.githubusercontent.com/rmnvg/faissight/main/docs/screenshots/tuner.png"></td>
 <td><img alt="Quantization: PQ error, compression and distance fidelity" src="https://raw.githubusercontent.com/rmnvg/faissight/main/docs/screenshots/quantization.png"></td>
 </tr>
 <tr>
