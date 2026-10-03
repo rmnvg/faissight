@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
-from fastapi import APIRouter
+from collections.abc import Callable
+
+from fastapi import APIRouter, Request
 
 from faissight.core.search import MissReason, NeighbourTrace, QueryReport
 from faissight.server import schemas as S
@@ -10,6 +12,7 @@ from faissight.server.routes.common import (
     IvfDep,
     SupportedDep,
     round_coords,
+    run_interactive,
     snippet,
     truth_source,
 )
@@ -19,7 +22,12 @@ from faissight.session import Session
 router = APIRouter()
 
 
-def _run_query(session: Session, req: S.SearchRequest, force_compare: bool = False) -> QueryReport:
+def _run_query(
+    session: Session,
+    req: S.SearchRequest,
+    force_compare: bool = False,
+    progress: Callable[[float, str], None] | None = None,
+) -> QueryReport:
     q = req.query
     return session.query(
         id=q.id,
@@ -31,6 +39,7 @@ def _run_query(session: Session, req: S.SearchRequest, force_compare: bool = Fal
         ef_search=req.ef_search,
         compare=req.compare or force_compare,
         candidates=req.candidates,
+        progress=progress,
     )
 
 
@@ -47,7 +56,7 @@ def _truth_rows(
         if tid < 0:
             continue
         t = by_id.get(int(tid))
-        reason = t.reason.value if t else (MissReason.FOUND.value if int(tid) in found else None)
+        reason = t.reason if t else (MissReason.FOUND if int(tid) in found else None)
         rows.append(
             S.TruthRow(
                 rank=rank,
@@ -64,8 +73,20 @@ def _truth_rows(
 
 
 @router.post("/search", response_model=S.SearchResponse)
-def search(req: S.SearchRequest, session: SupportedDep) -> S.SearchResponse:
-    report = _run_query(session, req)
+async def search(req: S.SearchRequest, session: SupportedDep, request: Request) -> S.SearchResponse:
+    # The whole response is built off the event loop: it may compute IVF assignments.
+    return await run_interactive(
+        request,
+        session,
+        lambda progress: _search_response(
+            session, req, _run_query(session, req, progress=progress)
+        ),
+    )
+
+
+def _search_response(
+    session: Session, req: S.SearchRequest, report: QueryReport
+) -> S.SearchResponse:
     r = report.result
     truth_ids = set(report.truth.valid_ids.tolist()) if report.truth is not None else None
     list_nos = session.assignments.lookup(r.ids) if session.assignments is not None else None
@@ -123,8 +144,14 @@ def search(req: S.SearchRequest, session: SupportedDep) -> S.SearchResponse:
 
 
 @router.post("/trace/ivf", response_model=S.IvfTraceResponse)
-def trace_ivf(req: S.SearchRequest, session: IvfDep) -> S.IvfTraceResponse:
-    return _ivf_trace_response(session, _run_query(session, req, force_compare=True))
+async def trace_ivf(req: S.SearchRequest, session: IvfDep, request: Request) -> S.IvfTraceResponse:
+    return await run_interactive(
+        request,
+        session,
+        lambda progress: _ivf_trace_response(
+            session, _run_query(session, req, force_compare=True, progress=progress)
+        ),
+    )
 
 
 def _ivf_trace_response(session: Session, report: QueryReport) -> S.IvfTraceResponse:

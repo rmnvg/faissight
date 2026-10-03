@@ -127,6 +127,21 @@ experiment shows both result tables, recall and latency; settings survive shared
 and results can be exported. Reranking cannot recover neighbours outside the candidate set.
 Python users can call `viewer.session.query(id=42, k=10, candidates=100)`.
 
+The same evaluation runs in the UI: start with `--vectors` and `--queries`, open
+**Relevance**, and load (or paste) the judgements JSONL. It shows recall, MRR and nDCG@k
+before and after optional exact reranking, every query's scores (worst first, or most
+helped by reranking) with a link that explains the query in the Query Explorer, and CSV or
+JSON exports. The web view takes up to 10,000 queries and 5 MB of judgements; use
+`faissight evaluate` for more.
+
+**Run history** keeps the newest 100 finished sweeps, index comparisons and relevance
+evaluations in `~/.cache/faissight/history/` (or `$FAISSIGHT_CACHE_DIR/history/`), so they
+survive restarts. Rename, download or delete them, or compare two saved sweeps with the same
+query-set and corpus checks as `faissight runs diff`. Saved sweeps record the decision for a
+0.95 recall target; use **Save run** in the Tuner for your own target and latency budget.
+`faissight cache clear` leaves history alone. It is off in `--demo-mode` and for sessions
+created with `disk_cache=False`.
+
 The Overview's **Diagnose my index** guide connects input checks, representative queries,
 tuning, and baseline verification.
 
@@ -293,7 +308,6 @@ beyond `--max-mb`. It never touches the demo data. `serve --no-cache` skips the 
 ## Roadmap
 
 - IVF-HNSW (HNSW coarse quantizer) and IVF FastScan support
-- Web interface for labelled relevance evaluation (available now in CLI/Python)
 - Load FAISS stores directly from LangChain / LlamaIndex save folders
 - VS Code extension
 
@@ -308,6 +322,10 @@ uv run python examples/make_synthetic.py && uv run faissight serve examples/data
 ```
 
 Frontend development: run `npm run dev` in `frontend/` next to a running `faissight serve`.
+The frontend's API types are generated from the server's OpenAPI schema; after changing
+`server/schemas.py`, run `uv run python scripts/generate_api_types.py` (CI fails on drift).
+Browser tests run on Chromium, Firefox and WebKit: `npx playwright install chromium firefox
+webkit`, build the UI, then `npm run e2e` in `frontend/`.
 Design decisions are logged in [docs/DECISIONS.md](https://github.com/rmnvg/faissight/blob/main/docs/DECISIONS.md).
 
 ## License

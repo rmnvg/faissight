@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import time
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from enum import Enum
 from typing import Any
@@ -480,8 +481,11 @@ def explain_query(
     assignments: Assignments | None = None,
     rerank_source: VectorSource | None = None,
     candidates: int | None = None,
+    progress: Callable[[float, str], None] | None = None,
 ) -> QueryReport:
     """Search, compare with exact ground truth (if given) and trace IVF probing (if IVF)."""
+    report = progress or (lambda _f, _m: None)
+    report(0.3, "Searching index")
     result = search(
         li, query.vector, k, nprobe=nprobe, ef_search=ef_search, exclude_id=query.exclude_id
     )
@@ -490,6 +494,7 @@ def explain_query(
     if candidates is not None:
         if candidates < k or rerank_source is None or rerank_source.reconstructed:
             raise ValueError("Reranking needs raw vectors and candidates >= k.")
+        report(0.4, "Retrieving rerank candidates")
         pool = search(
             li,
             query.vector,
@@ -498,11 +503,14 @@ def explain_query(
             ef_search=ef_search,
             exclude_id=query.exclude_id,
         )
+        report(0.5, "Reranking candidates")
         reranked = rerank(rerank_source, query.vector, pool, k)
         candidate_count = len(pool.valid_ids)
     if ground_truth is None:
         return QueryReport(query, result, reranked=reranked, candidate_count=candidate_count)
+    report(0.6, "Computing exact neighbours")
     truth = ground_truth.search(query.vector, k, exclude_id=query.exclude_id)
+    report(0.8, "Explaining missed neighbours")
     trace = None
     if li.kind.is_ivf and assignments is not None:
         trace = trace_ivf(li, query.vector, result, truth, assignments)

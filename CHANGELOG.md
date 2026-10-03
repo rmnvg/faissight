@@ -6,6 +6,33 @@ All notable changes to faissight are documented here. The format follows
 
 ## [Unreleased]
 
+### Added
+
+- **Relevance** view: load labelled judgements (JSONL, as for `faissight evaluate`) and see
+  recall, MRR and nDCG@k before and after exact reranking, per-query scores with links to
+  the Query Explorer, and CSV/JSON exports. API: `POST /api/evaluation`, then poll
+  `GET /api/evaluation/{job_id}`; `DELETE` cancels.
+- **Run history**: finished sweeps, comparisons and relevance evaluations are saved under
+  `~/.cache/faissight/history/` (newest 100) and survive restarts. Rename, download or
+  delete them, and compare two saved sweeps for regressions. API: `/api/history`.
+- A weekly **Performance** workflow measures this commit against the latest release on the
+  same runner (`benchmarks/regression.py`) and fails on the plan's budgets or a 2x slowdown.
+- Browser tests also run on Firefox and WebKit, with keyboard checks for the narrow-screen
+  menu and the Tuner's results table.
+
+### Changed
+
+- Searches and traces run on their own small worker pool and stop when the browser abandons
+  the request (a newer query or a closed tab), instead of finishing in the background.
+- The frontend's API types are generated from the server's OpenAPI schema; CI fails if
+  they drift.
+- PCA projections use about a third less peak memory (identical results).
+
+### Fixed
+
+- Tuner result rows can be opened with the keyboard (Enter or Space), and the narrow-screen
+  menu keeps focus inside it, closes with Escape and returns focus to the Menu button.
+
 ## [0.2.0] - 2026-10-03
 
 ### Added

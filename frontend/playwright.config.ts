@@ -12,7 +12,11 @@ export default defineConfig({
   retries: process.env.CI ? 1 : 0,
   reporter: process.env.CI ? 'github' : 'list',
   use: { baseURL: `http://127.0.0.1:${PORT}`, trace: 'retain-on-failure' },
-  projects: [{ name: 'chromium', use: { ...devices['Desktop Chrome'] } }],
+  projects: [
+    { name: 'chromium', use: { ...devices['Desktop Chrome'] } },
+    { name: 'firefox', use: { ...devices['Desktop Firefox'] }, testMatch: '**/workflow.spec.ts' },
+    { name: 'webkit', use: { ...devices['Desktop Safari'] }, testMatch: '**/workflow.spec.ts' },
+  ],
   webServer: [
     {
       command:

@@ -47,6 +47,7 @@ def create_app(session: Session, static_dir: Path | None = None) -> FastAPI:
             yield
         finally:
             session.jobs.close()
+            session.search_jobs.close()
 
     app = FastAPI(
         lifespan=lifespan,

@@ -4,7 +4,15 @@ from __future__ import annotations
 
 from typing import Annotated, Any, Literal
 
-from pydantic import BaseModel, ConfigDict, Field, PlainSerializer, model_validator
+from pydantic import BaseModel as PydanticBaseModel
+from pydantic import ConfigDict, Field, PlainSerializer, WithJsonSchema, model_validator
+
+from faissight.core.search import MissReason
+
+
+class BaseModel(PydanticBaseModel):
+    model_config = ConfigDict(json_schema_serialization_defaults_required=True)
+
 
 Scalar = int | float | bool | str
 
@@ -13,6 +21,10 @@ Scalar = int | float | bool | str
 UserId = Annotated[
     int,
     Field(ge=-1, le=2**63 - 1),
+    WithJsonSchema(
+        {"anyOf": [{"type": "integer"}, {"type": "string", "pattern": r"^-?[0-9]+$"}]},
+        mode="validation",
+    ),
     PlainSerializer(
         lambda value: str(value) if value > 2**53 - 1 else value,
         return_type=int | str,
@@ -241,7 +253,7 @@ class TruthRow(BaseModel):
     distance: float
     list_no: int | None = None
     probe_rank: int | None = None
-    reason: str | None = None
+    reason: MissReason | None = None
     found_rank: int | None = None
     snippet: dict[str, str] | None = None
 
@@ -720,3 +732,85 @@ class PqErrorResponse(BaseModel):
     per_list: list[PqListError] | None = None
     worst: list[PqWorst] | None = None
     distortion: PqDistortion | None = None
+
+
+class EvaluationRequest(BaseModel):
+    judgements: str = Field(min_length=1, max_length=5_000_000)
+    k: int = Field(10, ge=1, le=1000)
+    candidates: int | None = Field(None, ge=1, le=10_000)
+    nprobe: int | None = Field(None, ge=1)
+    ef_search: int | None = Field(None, ge=1)
+
+
+class RelevanceMetricsOut(BaseModel):
+    recall: float
+    mrr: float
+    ndcg: float
+
+
+class EvaluationRowOut(BaseModel):
+    row: int
+    metrics: RelevanceMetricsOut
+    latency_ms: float
+    ids: list[str]
+    reranked_metrics: RelevanceMetricsOut | None = None
+    reranked_latency_ms: float | None = None
+    reranked_ids: list[str] | None = None
+
+
+class EvaluationResultOut(BaseModel):
+    k: int
+    metric: str
+    params: dict[str, int]
+    n_queries: int
+    ndcg_gain: str
+    unjudged: str
+    metrics: RelevanceMetricsOut
+    reranked_metrics: RelevanceMetricsOut | None
+    candidates: int | None
+    queries: list[EvaluationRowOut]
+
+
+class EvaluationJobResponse(BaseModel):
+    job_id: str
+    status: Literal["running", "done", "failed", "cancelled"]
+    progress: float
+    message: str
+    error: str | None = None
+    result: EvaluationResultOut | None = None
+
+
+class HistorySummary(BaseModel):
+    id: str
+    kind: str
+    label: str
+    index: str
+    created_at: str
+
+
+class HistoryResponse(BaseModel):
+    enabled: bool
+    warning: str | None = None
+    current_index: str | None = None
+    """sha1 of the open index, to tell its runs from other indexes' (None when disabled)."""
+    runs: list[HistorySummary]
+
+
+class HistoryRecord(HistorySummary):
+    data: dict[str, Any]
+
+
+class HistoryRename(BaseModel):
+    label: str = Field(min_length=1, max_length=200)
+
+
+class HistoryCompareRequest(BaseModel):
+    baseline: str
+    current: str
+
+
+class HistoryComparison(BaseModel):
+    comparable: bool
+    regressed: bool
+    notes: list[str]
+    points: list[PointDeltaOut]
