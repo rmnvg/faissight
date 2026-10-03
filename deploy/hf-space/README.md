@@ -33,7 +33,7 @@ Apache-2.0. Passages from Falcon RefinedWeb (ODC-By 1.0).
 The Space repo needs only two files: this `README.md` and
 [`Dockerfile`](Dockerfile), both copied from `deploy/hf-space/` in the faissight repo. The
 image clones faissight from GitHub at `FAISSIGHT_REF` (default `main`; pin a tag such as
-`v0.3.0` for reproducible builds), builds the UI, bakes the demo data, model and
+`v0.1.0` for reproducible builds), builds the UI, bakes the demo data, model and
 projections, and serves on port 7860.
 
 To test the image locally from a faissight checkout:

@@ -67,7 +67,7 @@ def _supported(fn: Callable[..., Any], **kwargs: Any) -> dict[str, Any]:
 
 
 def _close(session: Any) -> None:
-    close = getattr(session.jobs, "close", None)  # added after 0.1.0
+    close = getattr(session.jobs, "close", None)  # added after the first prototype (dcc9060)
     if close is not None:
         close()
 
@@ -143,7 +143,8 @@ def measure(repeats: int = 3) -> dict[str, Any]:
         finally:
             _close(session)
         # Each sweep gets a fresh session: a repeated sweep would be served from its cache,
-        # and only newer versions take a seed. One timed pass after a warm-up, as in 0.1.0.
+        # and only newer versions take a seed. One timed pass after a warm-up, as in the first
+        # prototype (dcc9060).
         sweeps = []
         for _ in range(repeats):
             session = open_session()
