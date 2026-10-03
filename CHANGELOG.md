@@ -6,8 +6,11 @@ All notable changes to faissight are documented here. The format follows
 
 ## [Unreleased]
 
+## [0.3.0] - 2026-10-03
+
 ### Added
 
+- Python 3.13 support (tested in CI).
 - **Relevance** view: load labelled judgements (JSONL, as for `faissight evaluate`) and see
   recall, MRR and nDCG@k before and after exact reranking, per-query scores with links to
   the Query Explorer, and CSV/JSON exports. API: `POST /api/evaluation`, then poll
@@ -30,6 +33,8 @@ All notable changes to faissight are documented here. The format follows
 
 ### Fixed
 
+- The source distribution now includes `examples/` and `benchmarks/`, which its tests
+  need, and `CHANGELOG.md`; before, most of its tests failed with a missing file.
 - Tuner result rows can be opened with the keyboard (Enter or Space), and the narrow-screen
   menu keeps focus inside it, closes with Escape and returns focus to the Menu button.
 
