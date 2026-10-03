@@ -6,6 +6,8 @@ All notable changes to faissight are documented here. The format follows
 
 ## [Unreleased]
 
+## [0.2.0] - 2026-10-03
+
 ### Added
 
 - Saved runs and baselines: `faissight sweep --save` and the Tuner's **Save run** keep a
@@ -56,6 +58,9 @@ All notable changes to faissight are documented here. The format follows
 
 ### Fixed
 
+- `faissight demo --max-chunks N` with N below 256 downloaded and embedded the corpus, then
+  crashed with a FAISS traceback (IVF-PQ needs 256 training vectors). It now fails at once
+  with a clear message.
 - Saved-run comparisons that couldn't judge anything (different query sets, no shared
   settings, incompatible metrics) reported `regressed: false` and exited 0 like a clean
   pass. `RunComparison.comparable` (and the API's `comparable` field) now distinguishes

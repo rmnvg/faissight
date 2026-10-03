@@ -28,6 +28,8 @@ FILES = (
 )
 MODEL = "sentence-transformers/all-MiniLM-L6-v2"
 CHUNK_WORDS = 150  # ~200 tokens for English prose
+# IVFPQ with 8-bit codes trains 256 centroids per sub-quantizer; FAISS refuses fewer points.
+MIN_CHUNKS = 256
 SOURCE = f"{DATASET} (Apache-2.0); text from Falcon RefinedWeb (ODC-By 1.0)"
 DATA_LICENSE = f"""RAG demo data
 
@@ -169,12 +171,16 @@ def build_demo(
     from faissight.core._faiss import import_faiss
 
     faiss = import_faiss()
+    if max_chunks < MIN_CHUNKS:
+        raise ValueError(f"max_chunks must be at least {MIN_CHUNKS} (got {max_chunks}).")
     out.mkdir(parents=True, exist_ok=True)
     t0 = time.perf_counter()
 
     passages, questions = load_rows(download(out))
     chunks = chunk(passages, max_chunks)
     log(f"{len(passages):,} passages -> {len(chunks):,} chunks; {len(questions):,} questions")
+    if len(chunks) < MIN_CHUNKS:
+        raise ValueError(f"Only {len(chunks)} chunks; the demo indexes need {MIN_CHUNKS}.")
 
     log(f"embedding chunks with {MODEL}")
     x = embed([str(c["text"]) for c in chunks])

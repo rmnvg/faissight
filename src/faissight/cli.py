@@ -836,6 +836,11 @@ def demo(
         raise _fail(f"Unknown --index {index!r}.", f"Use one of: {', '.join(DEMO_INDEXES)}.")
     out = data_dir or demo_mod.default_dir()
     if rebuild or not demo_mod.is_built(out):
+        if max_chunks < demo_mod.MIN_CHUNKS:
+            raise _fail(
+                f"--max-chunks must be at least {demo_mod.MIN_CHUNKS}.",
+                "IVF-PQ needs 256 training vectors per sub-quantizer.",
+            )
         missing = [
             m for m in ("sentence_transformers", "pyarrow") if importlib.util.find_spec(m) is None
         ]
