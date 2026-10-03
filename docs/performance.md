@@ -111,3 +111,23 @@ separate processes, 100,000 × 128 float32 vectors) measured peak RSS of **432 M
 and **149 MiB after**, with identical mean squared reconstruction error. This measures only
 reconstruction-error calculation, including both input arrays and Python overhead, not the
 complete quantization job.
+
+### Automated regression checks
+
+The **Performance** workflow (weekly, or run it by hand with any baseline ref) measures this
+commit and the latest release tag on the same runner, then fails above the plan's budgets
+or when a metric is more than 2x the baseline's (1.25x for peak RSS). Run it locally with:
+
+```bash
+uv run python benchmarks/regression.py measure --output current.json
+uv run python benchmarks/regression.py check current.json [--baseline baseline.json]
+```
+
+The dataset is fixed: seed 42, 20,000 × 384 clustered float32 vectors, IVF128-Flat and 200
+held-out queries, one FAISS thread. It measures session startup from files, PCA, the first
+(cold) and warm query with IVF trace and ground truth, a 200-query × 8-value sweep and peak
+RSS. To measure an older version, run the script with that checkout's interpreter.
+
+On an M-series laptop (faiss-cpu 1.15): startup 9 ms, PCA 33 ms, warm query p95 0.8 ms,
+sweep 0.66 s and peak RSS 285 MiB. The same script on 0.1.0 measured a 0.36 s sweep: newer
+sweeps also compute probe coverage and recall intervals.

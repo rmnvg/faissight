@@ -67,19 +67,29 @@ class PcaModel:
         return ((xa - self.mean) @ self.components.T).astype(np.float32)
 
 
+# Rows per float64 block when accumulating the PCA covariance (~16 MB at d = 256).
+_PCA_BLOCK_ROWS = 8192
+
+
 def fit_pca(x: npt.ArrayLike, dims: int) -> PcaModel:
     """PCA via eigendecomposition of the covariance matrix (numpy only).
 
     ``O(n d^2)`` like an SVD but several times faster for ``n >> d``. Component signs are
-    fixed (largest-magnitude loading positive) so results are deterministic.
+    fixed (largest-magnitude loading positive) so results are deterministic. The covariance
+    is accumulated in float64 over row blocks, so the workspace stays bounded instead of
+    two float64 copies of ``x``.
     """
-    xa = np.asarray(x, dtype=np.float64)
+    xa = np.asarray(x)
     n, d = xa.shape
     if not 1 <= dims <= d:
         raise ValueError(f"dims must be between 1 and d={d}, got {dims}.")
-    mean = xa.mean(axis=0)
-    xc = xa - mean
-    cov = xc.T @ xc / max(n - 1, 1)
+    mean = xa.mean(axis=0, dtype=np.float64)
+    cov = np.zeros((d, d))
+    for start in range(0, n, _PCA_BLOCK_ROWS):
+        block = xa[start : start + _PCA_BLOCK_ROWS].astype(np.float64)
+        block -= mean
+        cov += block.T @ block
+    cov /= max(n - 1, 1)
     eigvals, eigvecs = np.linalg.eigh(cov)
     order = np.argsort(eigvals)[::-1][:dims]
     comps = eigvecs[:, order].T

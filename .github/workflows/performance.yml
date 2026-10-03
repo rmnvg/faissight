@@ -1,0 +1,62 @@
+name: Performance
+
+# Weekly (and on demand): measure this commit and a baseline on the same runner, then fail
+# on the plan's absolute budgets or a large slowdown against the baseline. Comparing on one
+# machine cancels out how fast the runner happens to be.
+
+on:
+  workflow_dispatch:
+    inputs:
+      baseline:
+        description: Git ref to compare against (default the latest v* tag; empty run if none)
+        required: false
+  schedule:
+    - cron: '0 3 * * 1'
+
+permissions:
+  contents: read
+
+jobs:
+  performance:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      UV_PYTHON: '3.12'
+      OMP_NUM_THREADS: '1'
+      OPENBLAS_NUM_THREADS: '1'
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0 # tags, for the default baseline
+      - uses: astral-sh/setup-uv@v6
+        with:
+          enable-cache: true
+      - run: uv sync --extra faiss-cpu --locked
+      - name: Measure this commit
+        run: uv run python benchmarks/regression.py measure --output current.json
+      - name: Measure the baseline
+        id: baseline
+        env:
+          REF: ${{ inputs.baseline }}
+        run: |
+          ref="${REF:-$(git describe --tags --abbrev=0 --match 'v*' 2>/dev/null || true)}"
+          if [ -z "$ref" ]; then
+            echo "No baseline ref (no v* tag yet); checking absolute budgets only."
+            exit 0
+          fi
+          git worktree add "$RUNNER_TEMP/baseline" "$ref"
+          (cd "$RUNNER_TEMP/baseline" && uv sync --extra faiss-cpu --locked)
+          # This commit's script, the baseline's faissight: measure() uses only the public Session API.
+          "$RUNNER_TEMP/baseline/.venv/bin/python" benchmarks/regression.py measure --output baseline.json
+          echo "file=baseline.json" >> "$GITHUB_OUTPUT"
+          echo "Baseline: $ref" >> "$GITHUB_STEP_SUMMARY"
+      - name: Check budgets
+        env:
+          BASELINE: ${{ steps.baseline.outputs.file }}
+        run: uv run python benchmarks/regression.py check current.json ${BASELINE:+--baseline "$BASELINE"}
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: performance-measurements
+          path: '*.json'
+          if-no-files-found: ignore
