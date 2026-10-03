@@ -65,12 +65,14 @@ report.recall, report.ivf_trace.min_nprobe_for_all
 | **Quantization** | How far PQ/SQ codes are from your raw vectors, the compression ratio, and how much they distort distances between near neighbours (the part that decides ranking). |
 | **Overview** | Inverted-list sizes, imbalance factor with a plain-English verdict, largest lists. |
 | **Cluster map** | Stored vectors projected with PCA or UMAP (2D/3D), with IVF centroids; click a list to read its chunks. |
+| **Relevance** | Labelled judgements against your held-out queries: recall, MRR and nDCG@k before and after exact reranking, worst queries first. See [below](#labelled-relevance-and-reranking). |
+| **Run history** | Finished sweeps, comparisons and evaluations kept across restarts; rename, download, or diff two saved sweeps. |
 
 ![Animated HNSW search: greedy descent through the upper layers, then candidate expansion on level 0](https://raw.githubusercontent.com/rmnvg/faissight/main/docs/screenshots/hnsw-search.png)
 
 <table>
 <tr>
-<td><img alt="Tuner: recall and latency by nprobe with a recommendation" src="https://raw.githubusercontent.com/rmnvg/faissight/main/docs/screenshots/tuner.png"></td>
+<td><img alt="Tuner: no nprobe reaches 0.95 recall on IVF-PQ; the suggested next step explains that compression caps recall near 0.62 and to re-rank with exact distances" src="https://raw.githubusercontent.com/rmnvg/faissight/main/docs/screenshots/tuner.png"></td>
 <td><img alt="Quantization: PQ error, compression and distance fidelity" src="https://raw.githubusercontent.com/rmnvg/faissight/main/docs/screenshots/quantization.png"></td>
 </tr>
 <tr>
@@ -169,6 +171,8 @@ faissight sweep INDEX --vectors v.npy [--param nprobe] [--target 0.95]
 faissight runs diff EARLIER.json LATER.json   # regressions between saved runs
 faissight compare LEFT RIGHT --vectors v.npy [--queries q.npy] [--ids ids.npy]
                       [--left-nprobe 4] [--right-ef-search 64] [--json]
+faissight evaluate INDEX --vectors v.npy --queries q.npy --labels judgements.jsonl
+                      [--k 10] [--candidates 100] [--json]   # labelled relevance
 faissight demo [--index ivf_pq|ivf_flat|hnsw]
 faissight cache info | clear [--older-than-days 30] [--max-mb 500]
 ```

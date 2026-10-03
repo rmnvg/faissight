@@ -1,0 +1,31 @@
+name: Bug report
+description: Something in faissight is wrong or crashes
+labels: [bug]
+body:
+  - type: textarea
+    id: what
+    attributes:
+      label: What happened
+      description: What you did, what you expected, and what you saw instead (the full traceback or API error, if any).
+    validations:
+      required: true
+  - type: textarea
+    id: index
+    attributes:
+      label: Index
+      description: Output of `faissight info YOUR.index` (kind, wrappers, parameters).
+      render: text
+  - type: input
+    id: versions
+    attributes:
+      label: Versions
+      description: "`faissight --version`, FAISS version, Python version and OS"
+      placeholder: faissight 0.3.0, faiss-cpu 1.15.1, Python 3.12, macOS 15
+    validations:
+      required: true
+  - type: textarea
+    id: reproduce
+    attributes:
+      label: How to reproduce
+      description: Ideally a short script that builds a small index showing the problem.
+      render: python
