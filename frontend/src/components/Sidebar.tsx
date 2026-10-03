@@ -58,6 +58,14 @@ export function Sidebar({
       enabled: supported && info?.sweep != null,
     },
     { view: 'compare', label: 'Compare', hint: 'Choose between indexes', enabled: supported },
+    {
+      view: 'evaluation',
+      label: 'Relevance',
+      hint: 'Labelled recall, MRR, nDCG',
+      // Judgements are per held-out query, scored against the raw corpus.
+      enabled: supported && info !== undefined && info.inputs.raw_vectors && (info.inputs.queries ?? 0) > 0,
+    },
+    { view: 'history', label: 'Run history', hint: 'Saved experiments', enabled: true },
   ]
   return (
     <aside className="flex w-64 shrink-0 flex-col gap-4 overflow-auto border-r border-line bg-surface p-4 print:hidden">

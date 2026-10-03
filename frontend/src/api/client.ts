@@ -1,6 +1,11 @@
 import type { UserId } from './types'
 import type {
   ApiErrorBody,
+  EvaluationJobResponse,
+  EvaluationRequest,
+  HistoryComparison,
+  HistoryRecord,
+  HistoryResponse,
   CompareJob,
   CompareRequest,
   Dims,
@@ -153,6 +158,25 @@ export const api = {
   metadata: (id: UserId, signal?: AbortSignal) => get<MetadataRow>(`metadata/${id}`, signal),
   /** Starts (or reuses) a sweep; the job may still be running (HTTP 202). */
   startSweep: (req: SweepRequest) => post<SweepJob>('sweep', req),
+  evaluate: (req: EvaluationRequest) => post<EvaluationJobResponse>('evaluation', req),
+  evaluation: (jobId: string, signal?: AbortSignal) =>
+    get<EvaluationJobResponse>(`evaluation/${encodeURIComponent(jobId)}`, signal),
+  cancelEvaluation: async (jobId: string) =>
+    (await request<EvaluationJobResponse>(`evaluation/${encodeURIComponent(jobId)}`, { method: 'DELETE' })).body,
+  history: (signal?: AbortSignal) => get<HistoryResponse>('history', signal),
+  historyRecord: (id: string) => get<HistoryRecord>(`history/${encodeURIComponent(id)}`),
+  renameRun: async (id: string, label: string) =>
+    (
+      await request<HistoryRecord>(`history/${encodeURIComponent(id)}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ label }),
+      })
+    ).body,
+  deleteRun: async (id: string) =>
+    (await request<{ deleted: boolean }>(`history/${encodeURIComponent(id)}`, { method: 'DELETE' })).body,
+  compareHistory: (baseline: string, current: string) =>
+    post<HistoryComparison>('history/compare', { baseline, current }),
   cancelSweep: async (jobId: string) =>
     (await request<SweepJob>(`sweep/${encodeURIComponent(jobId)}`, { method: 'DELETE' })).body,
   sweep: (jobId: string, signal?: AbortSignal) =>
