@@ -94,3 +94,91 @@ def test_demo_unknown_index(tmp_path, fake_serve) -> None:
     result = CliRunner().invoke(app, ["demo", "--index", "bogus", "--data-dir", str(tmp_path)])
     assert result.exit_code == 1
     assert "Unknown --index" in result.output
+
+
+def test_download_fetches_once(tmp_path, monkeypatch, rag) -> None:
+    fetched = []
+
+    def fake_retrieve(url, path):
+        fetched.append(url)
+        path.write_text("parquet")
+
+    monkeypatch.setattr(rag.urllib.request, "urlretrieve", fake_retrieve)
+    paths = rag.download(tmp_path)
+    assert [p.name for p in paths] == list(rag.FILES)
+    assert all(p.exists() for p in paths)
+    assert not list((tmp_path / "raw").glob("*.part"))
+    assert fetched == [rag.BASE + name for name in rag.FILES]
+    rag.download(tmp_path)
+    assert len(fetched) == len(rag.FILES)  # cached copies are reused
+
+
+def _write_parquet(path, contexts, questions) -> None:
+    pa = pytest.importorskip("pyarrow")
+    import pyarrow.parquet as pq
+
+    pq.write_table(pa.table({"context": contexts, "question": questions}), path)
+
+
+def test_load_rows_dedupes_passages_and_normalises_whitespace(tmp_path, rag) -> None:
+    a, b = tmp_path / "a.parquet", tmp_path / "b.parquet"
+    _write_parquet(a, ["one  two\nthree", "  ", "four"], ["q1 ", "", "q2"])
+    _write_parquet(b, ["one two three", None], ["q3", None])
+    passages, questions = rag.load_rows([a, b])
+    assert passages == ["one two three", "four"]
+    assert questions == ["q1", "q2", "q3"]
+
+
+def _fake_embed(texts, batch_size=256):
+    import zlib
+
+    import numpy as np
+
+    # Deterministic per text, unit-norm like the real MiniLM output.
+    vecs = np.stack(
+        [np.random.default_rng(zlib.crc32(t.encode())).standard_normal(384) for t in texts]
+    ).astype("float32")
+    return vecs / np.linalg.norm(vecs, axis=1, keepdims=True)
+
+
+def test_build_demo_end_to_end_offline(tmp_path, monkeypatch, rag) -> None:
+    from faissight.core.loader import load_index
+    from faissight.core.types import IndexKind, Metric
+
+    raw = tmp_path / "raw"
+    raw.mkdir()
+    words = " ".join(f"w{i}" for i in range(rag.CHUNK_WORDS))
+    contexts = [f"passage {i} {words}" for i in range(300)]
+    _write_parquet(raw / rag.FILES[0], contexts[:200], [f"question {i}" for i in range(200)])
+    _write_parquet(raw / rag.FILES[1], contexts[200:], [f"question {i}" for i in range(200, 300)])
+    monkeypatch.setattr(rag, "embed", _fake_embed)
+
+    out = rag.build_demo(tmp_path, max_chunks=rag.MIN_CHUNKS, n_queries=20)
+    assert rag.is_built(out)
+    assert (out / "DATA_LICENSE.txt").exists()
+    assert len((out / "chunks.jsonl").read_text().splitlines()) == rag.MIN_CHUNKS
+    assert len((out / "queries.jsonl").read_text().splitlines()) == 20
+    kinds = {
+        "ivf_flat": IndexKind.IVF_FLAT,
+        "ivf_pq": IndexKind.IVF_PQ,
+        "hnsw_flat": IndexKind.HNSW_FLAT,
+    }
+    for name, kind in kinds.items():
+        loaded = load_index(out / f"{name}.index")
+        assert loaded.kind == kind
+        assert loaded.metric == Metric.IP
+        assert loaded.ntotal == rag.MIN_CHUNKS
+
+
+def test_build_demo_rejects_too_few_chunks(tmp_path, rag) -> None:
+    with pytest.raises(ValueError, match="at least 256"):
+        rag.build_demo(tmp_path, max_chunks=100)
+    assert not (tmp_path / "raw").exists()  # nothing downloaded
+
+
+def test_demo_rejects_small_max_chunks_before_building(tmp_path, monkeypatch, fake_serve) -> None:
+    monkeypatch.setattr(demo_mod, "build_demo", lambda *a, **k: pytest.fail("built"))
+    result = CliRunner().invoke(app, ["demo", "--data-dir", str(tmp_path), "--max-chunks", "100"])
+    assert result.exit_code == 1
+    assert "--max-chunks must be at least 256" in result.output
+    assert fake_serve == []
