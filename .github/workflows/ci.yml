@@ -100,9 +100,9 @@ jobs:
         run: |
           npm ci
           npm run build
-      - name: Install Chromium
+      - name: Install browsers
         working-directory: frontend
-        run: npx playwright install --with-deps chromium
+        run: npx playwright install --with-deps chromium firefox webkit
       - name: Run smoke tests
         working-directory: frontend
         run: npm run e2e

@@ -1,4 +1,4 @@
-import { lazy, Suspense, useEffect, useState } from 'react'
+import { lazy, Suspense, useEffect, useRef, useState } from 'react'
 import { useInfo } from './api/hooks'
 import { ErrorBoundary } from './components/ErrorBoundary'
 import { Sidebar } from './components/Sidebar'
@@ -27,6 +27,43 @@ export default function App() {
   const narrow = useNarrow()
   const [focus, setFocus] = useState(narrow)
   const [wasNarrow, setWasNarrow] = useState(narrow)
+  const menu = useRef<HTMLDivElement>(null)
+  const menuToggle = useRef<HTMLButtonElement>(null)
+  // On narrow frames the open menu is a modal dialog: focus moves into it, Tab cycles
+  // inside it, Escape closes it, and focus returns to the Menu button.
+  useEffect(() => {
+    if (!narrow || focus || !menu.current) return
+    const container = menu.current
+    const toggle = menuToggle
+    const controls = () =>
+      [...container.querySelectorAll<HTMLElement>('button:not(:disabled), a[href], input, select, [tabindex="0"]')]
+    controls()[0]?.focus()
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') {
+        e.preventDefault()
+        setFocus(true)
+        return
+      }
+      if (e.key !== 'Tab') return
+      const items = controls()
+      const first = items[0]
+      const last = items[items.length - 1]
+      if (e.shiftKey && document.activeElement === first) {
+        e.preventDefault()
+        last?.focus()
+      } else if (!e.shiftKey && document.activeElement === last) {
+        e.preventDefault()
+        first?.focus()
+      }
+    }
+    container.addEventListener('keydown', onKey)
+    return () => {
+      container.removeEventListener('keydown', onKey)
+      // The Menu button only renders again once the menu has closed.
+      requestAnimationFrame(() => toggle.current?.focus())
+    }
+  }, [narrow, focus])
+
   if (narrow !== wasNarrow) {
     setWasNarrow(narrow)
     setFocus(narrow)
@@ -53,7 +90,13 @@ export default function App() {
         />
       )}
       {!focus && (
-        <div className={narrow ? 'fixed inset-y-0 left-0 z-40 flex shadow-xl' : 'flex'}>
+        <div
+          ref={menu}
+          role={narrow ? 'dialog' : undefined}
+          aria-modal={narrow ? true : undefined}
+          aria-label={narrow ? 'Navigation menu' : undefined}
+          className={narrow ? 'fixed inset-y-0 left-0 z-40 flex shadow-xl' : 'flex'}
+        >
           <Sidebar
             info={info.data}
             view={view}
@@ -72,6 +115,7 @@ export default function App() {
           // On narrow frames the button sits in its own bar so it never covers a page heading.
           <div className={narrow ? 'sticky top-0 z-20 border-b border-line bg-page/95 px-2 py-1.5 print:hidden' : ''}>
             <button
+              ref={menuToggle}
               onClick={() => setFocus(false)}
               className={`${narrow ? '' : 'absolute top-2 left-2 z-20'} rounded-md border border-line bg-surface/90 px-2 py-1 text-xs text-ink-2 hover:text-ink print:hidden`}
               title="Show the sidebar (\)"

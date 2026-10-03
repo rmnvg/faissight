@@ -643,6 +643,11 @@ function Results({
                   <tr
                     key={p.value}
                     onClick={hasDiagnostics ? () => setFocusValue(p.value) : undefined}
+                    tabIndex={hasDiagnostics ? 0 : undefined}
+                    aria-label={hasDiagnostics ? `Inspect ${result.param} ${p.value}` : undefined}
+                    onKeyDown={hasDiagnostics ? (e) => {
+                      if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); setFocusValue(p.value) }
+                    } : undefined}
                     title={hasDiagnostics ? 'Show per-query recall for this value' : undefined}
                     className={`border-t border-line ${hasDiagnostics ? 'cursor-pointer hover:bg-surface-2' : ''} ${
                       rec?.value === p.value ? 'bg-accent-wash' : ''
