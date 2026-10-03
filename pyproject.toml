@@ -53,6 +53,7 @@ faissight = "faissight.cli:app"
 Homepage = "https://github.com/rmnvg/faissight"
 Repository = "https://github.com/rmnvg/faissight"
 Issues = "https://github.com/rmnvg/faissight/issues"
+Changelog = "https://github.com/rmnvg/faissight/blob/main/CHANGELOG.md"
 
 [build-system]
 requires = ["hatchling"]
@@ -66,7 +67,18 @@ artifacts = ["src/faissight/static/**"]
 packages = ["src/faissight"]
 
 [tool.hatch.build.targets.sdist]
-include = ["src/faissight", "tests", "README.md", "LICENSE", "pyproject.toml"]
+# Anchored paths; the tests need examples/ (fixtures, notebook) and benchmarks/ to run from the sdist.
+include = [
+    "/src/faissight",
+    "/tests",
+    "/examples/*.py",
+    "/examples/*.ipynb",
+    "/benchmarks",
+    "/README.md",
+    "/CHANGELOG.md",
+    "/LICENSE",
+    "/pyproject.toml",
+]
 
 [tool.ruff]
 line-length = 100

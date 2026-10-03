@@ -872,6 +872,9 @@ def test_demo_allows_normal_requests(demo_client) -> None:
 
 def test_demo_umap_only_when_precomputed(synthetic, demo_client, monkeypatch) -> None:
     client, cache = demo_client
+    # Pretend umap-learn is installed, so the demo limit (not UMAP_UNAVAILABLE) is what's
+    # tested even where the [umap] extra isn't, e.g. tests run from the sdist.
+    monkeypatch.setattr("faissight.session.importlib.util.find_spec", lambda name: object())
     _assert_error(client.get("/api/projection", params={"method": "umap"}), 403, "DEMO_LIMIT")
     # Precompute (as the Docker build does) with a normal session sharing the cache; fake
     # the UMAP fit so the test stays fast.
@@ -887,7 +890,6 @@ def test_demo_umap_only_when_precomputed(synthetic, demo_client, monkeypatch) ->
         return Model()
 
     monkeypatch.setattr(P, "_fit_umap", fake_umap)
-    monkeypatch.setattr("faissight.session.importlib.util.find_spec", lambda name: object())
     warm = Session(synthetic["ivf_flat"], vectors=synthetic["vectors"], cache_root=cache)
     assert warm.projection_job("umap", 2).wait(30)
     assert _wait_projection(client, method="umap").status_code == 200
